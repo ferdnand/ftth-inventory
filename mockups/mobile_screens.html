@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>FTTH Field Inventory — Mobile Mockup</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+:root{
+  --bg:#0E1420;
+  --surface:#171F2E;
+  --surface-2:#1F2A3D;
+  --border:#28334A;
+  --teal:#2DD4BF;
+  --teal-dim:#1B7A70;
+  --amber:#F5A623;
+  --danger:#EF4565;
+  --success:#34D399;
+  --text-1:#EDF1F7;
+  --text-2:#8B96A8;
+  --text-3:#5A6478;
+}
+*{box-sizing:border-box; margin:0; padding:0;}
+body{
+  background:#05070B;
+  font-family:'Inter',sans-serif;
+  display:flex;
+  align-items:flex-start;
+  justify-content:center;
+  padding:40px 20px;
+  min-height:100vh;
+}
+.stage{ display:flex; gap:28px; flex-wrap:wrap; justify-content:center; }
+.caption{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:13px;
+  color:#5A6478;
+  text-align:center;
+  margin-top:14px;
+  letter-spacing:.02em;
+}
+.phone{
+  width:360px;
+  height:760px;
+  background:var(--bg);
+  border-radius:36px;
+  border:8px solid #04060A;
+  box-shadow:0 30px 60px rgba(0,0,0,.5), inset 0 0 0 1px #1a2233;
+  overflow:hidden;
+  position:relative;
+  display:flex;
+  flex-direction:column;
+}
+.statusbar{
+  height:30px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:0 20px;
+  font-family:'Space Grotesk',sans-serif;
+  font-size:12px;
+  color:var(--text-1);
+  flex-shrink:0;
+}
+/* fiber trace signature: thin animated gradient line */
+.trace{
+  height:2px;
+  width:100%;
+  background:linear-gradient(90deg, transparent 0%, var(--teal) 20%, #7FF0E3 50%, var(--teal) 80%, transparent 100%);
+  background-size:200% 100%;
+  animation:traceMove 3.2s linear infinite;
+  flex-shrink:0;
+}
+@keyframes traceMove{
+  0%{background-position:200% 0;}
+  100%{background-position:-200% 0;}
+}
+.topbar{
+  padding:16px 20px 14px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+.topbar .eyebrow{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11px;
+  color:var(--text-3);
+  letter-spacing:.06em;
+  text-transform:uppercase;
+}
+.topbar h1{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:20px;
+  font-weight:600;
+  color:var(--text-1);
+  margin-top:3px;
+}
+.topbar .sub{
+  font-size:12.5px;
+  color:var(--text-2);
+  margin-top:4px;
+}
+.content{
+  flex:1;
+  overflow-y:auto;
+  padding:16px 18px 90px;
+}
+.content::-webkit-scrollbar{width:0px;}
+
+.section-label{
+  font-family:'Space Grotesk',sans-serif;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:var(--text-3);
+  margin:18px 0 10px;
+}
+.section-label:first-child{margin-top:0;}
+
+.divider{
+  height:1px;
+  background:linear-gradient(90deg, var(--teal-dim) 0%, transparent 70%);
+  margin:14px 0;
+}
+
+.card{
+  background:var(--surface);
+  border:1px solid var(--border);
+  border-radius:14px;
+  padding:14px;
+  margin-bottom:10px;
+}
+.card.flat{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:10px;
+}
+.item-name{
+  font-size:14.5px;
+  font-weight:600;
+  color:var(--text-1);
+}
+.item-meta{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:11.5px;
+  color:var(--text-2);
+  margin-top:3px;
+}
+.qty{
+  font-family:'IBM Plex Mono',monospace;
+  font-size:18px;
+  font-weight:600;
+  color:var(--text-1);
+  text-align:right;
+}
+.qty .unit{
+  font-size:10px;
+  color:var(--text-3);
+  display:block;
+  font-weight:400;
+  text-align:right;
+}
+.badge{
+  display:inline-block;
+  font-family:'Space Grotesk',sans-serif;
+  font-size:10px;
+  font-weight:600;
+  letter-spacing:.03em;
+  padding:3px 8px;
+  border-radius:20px;
+  margin-top:6px;
+}
+.badge.low{ background:rgba(245,166,35,.15); color:var(--amber); border:1px solid rgba(245,166,35,.35); }
+.badge.ok{ background:rgba(52,211,153,.12); color:var(--success); border:1px solid rgba(52,211,153,.3); }
+.badge.installed{ background:rgba(45,212,191,.12); color:var(--teal); border:1px solid rgba(45,212,191,.3); }
+
+.serial-row{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  padding:10px 0;
+  border-bottom:1px solid var(--border);
+}
+.serial-row:last-child{border-bottom:none;}
+.serial-row .s-id{ font-family:'IBM Plex Mono',monospace; font-size:12.5px; color:var(--text-1); }
+.serial-row .s-status{ font-size:10.5px; color:var(--text-3); margin-top:2px; }
+
+.btn-primary{
+  position:relative;
+  width:100%;
+  background:var(--teal);
+  color:#04141A;
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:700;
+  font-size:14.5px;
+  border:none;
+  border-radius:12px;
+  padding:14px;
+  overflow:hidden;
+  cursor:pointer;
+  margin-top:6px;
+}
+.btn-primary::after{
+  content:'';
+  position:absolute; top:0; left:-60%;
+  width:40%; height:100%;
+  background:linear-gradient(90deg, transparent, rgba(255,255,255,.55), transparent);
+  transform:skewX(-20deg);
+  animation:pulseBtn 2.6s ease-in-out infinite;
+}
+@keyframes pulseBtn{
+  0%{left:-60%;}
+  50%{left:130%;}
+  100%{left:130%;}
+}
+.btn-secondary{
+  width:100%;
+  background:transparent;
+  color:var(--text-1);
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:600;
+  font-size:13.5px;
+  border:1px solid var(--border);
+  border-radius:12px;
+  padding:12px;
+  cursor:pointer;
+  margin-top:8px;
+}
+.btn-danger{
+  width:100%;
+  background:rgba(239,69,101,.1);
+  color:var(--danger);
+  font-family:'Space Grotesk',sans-serif;
+  font-weight:600;
+  font-size:13.5px;
+  border:1px solid rgba(239,69,101,.35);
+  border-radius:12px;
+  padding:12px;
+  cursor:pointer;
+  margin-top:8px;
+}
+
+.field{
+  margin-bottom:12px;
+}
+.field label{
+  display:block;
+  font-family:'Space Grotesk',sans-serif;
+  font-size:11px;
+  font-weight:600;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  color:var(--text-3);
+  margin-bottom:6px;
+}
+.field input, .field select{
+  width:100%;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:12px;
+  font-family:'IBM Plex Mono',monospace;
+  font-size:13.5px;
+  color:var(--text-1);
+  outline:none;
+}
+.field input::placeholder{ color:var(--text-3); font-family:'Inter',sans-serif;}
+.field select{ font-family:'Inter',sans-serif; }
+.field .hint{ font-size:11px; color:var(--text-3); margin-top:5px; }
+
+.premise-search{
+  display:flex; align-items:center; gap:8px;
+  background:var(--surface-2);
+  border:1px solid var(--border);
+  border-radius:10px;
+  padding:11px 12px;
+  margin-bottom:12px;
+}
+.premise-search input{
+  border:none; background:transparent; outline:none;
+  color:var(--text-1); font-size:13.5px; width:100%;
+  font-family:'Inter',sans-serif;
+}
+.premise-search svg{ flex-shrink:0; }
+
+.result-item{
+  padding:11px 12px;
+  border:1px solid var(--border);
+  border-radius:10px;
+  margin-bottom:8px;
+  cursor:pointer;
+}
+.result-item .addr{ font-size:13.5px; font-weight:600; color:var(--text-1); }
+.result-item .id{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-3); margin-top:2px; }
+.result-item.selected{ border-color:var(--teal); background:rgba(45,212,191,.06); }
+
+.timeline{ position:relative; padding-left:20px; }
+.timeline::before{
+  content:'';
+  position:absolute; left:5px; top:4px; bottom:4px; width:1px;
+  background:linear-gradient(180deg, var(--teal) 0%, var(--border) 100%);
+}
+.t-item{ position:relative; margin-bottom:18px; }
+.t-item::before{
+  content:'';
+  position:absolute; left:-19px; top:3px;
+  width:9px; height:9px; border-radius:50%;
+  background:var(--surface); border:2px solid var(--teal);
+}
+.t-item.removed::before{ border-color:var(--text-3); }
+.t-item .t-date{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; color:var(--text-3); }
+.t-item .t-title{ font-size:13.5px; font-weight:600; color:var(--text-1); margin-top:2px; }
+.t-item .t-meta{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-2); margin-top:3px; }
+.t-item .t-reason{
+  display:inline-block; margin-top:6px;
+  font-family:'Space Grotesk',sans-serif; font-size:10px; font-weight:600;
+  padding:2px 7px; border-radius:20px;
+  background:rgba(239,69,101,.12); color:var(--danger); border:1px solid rgba(239,69,101,.3);
+}
+.t-item .t-reason.upgrade{ background:rgba(45,212,191,.1); color:var(--teal); border-color:rgba(45,212,191,.3);}
+
+.stat-row{ display:flex; gap:10px; margin-bottom:16px;}
+.stat{
+  flex:1; background:var(--surface); border:1px solid var(--border); border-radius:12px;
+  padding:12px; text-align:center;
+}
+.stat .num{ font-family:'IBM Plex Mono',monospace; font-size:22px; font-weight:600; color:var(--teal); }
+.stat .lbl{ font-size:10px; color:var(--text-2); margin-top:3px; text-transform:uppercase; letter-spacing:.04em;}
+
+.tabbar{
+  position:absolute; bottom:0; left:0; right:0;
+  height:78px;
+  background:rgba(23,31,46,.92);
+  backdrop-filter:blur(10px);
+  border-top:1px solid var(--border);
+  display:flex;
+  padding-bottom:16px;
+}
+.tab{
+  flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:4px; cursor:pointer; color:var(--text-3);
+}
+.tab.active{ color:var(--teal); }
+.tab span{ font-family:'Space Grotesk',sans-serif; font-size:10.5px; font-weight:600; }
+
+.screen{ display:none; }
+.screen.active{ display:block; }
+
+.wo-chip{
+  display:inline-flex; align-items:center; gap:6px;
+  background:var(--surface-2); border:1px solid var(--border);
+  border-radius:20px; padding:5px 10px; margin-bottom:14px;
+  font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--text-2);
+}
+.wo-chip .dot{ width:6px; height:6px; border-radius:50%; background:var(--teal); }
+</style>
+</head>
+<body>
+
+<div class="stage">
+
+  <!-- PHONE 1: MY STOCK -->
+  <div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span><span>FTTH Field · 4G</span></div>
+    <div class="trace"></div>
+    <div class="topbar">
+      <div class="eyebrow">Tech Van · JK-04</div>
+      <h1>My Stock</h1>
+      <div class="sub">John Kamau · last synced 2 min ago</div>
+    </div>
+    <div class="content">
+
+      <div class="stat-row">
+        <div class="stat"><div class="num">7</div><div class="lbl">Serialized</div></div>
+        <div class="stat"><div class="num">3</div><div class="lbl">Bulk items</div></div>
+        <div class="stat" style="border-color:rgba(245,166,35,.4)"><div class="num" style="color:var(--amber)">1</div><div class="lbl">Low stock</div></div>
+      </div>
+
+      <div class="section-label">Serialized — CPE &amp; Actives</div>
+      <div class="card">
+        <div class="item-name">ONT — Huawei HG8245Q2</div>
+        <div class="item-meta">4 units in van</div>
+        <span class="badge ok">Ready to install</span>
+      </div>
+      <div class="card">
+        <div class="item-name">ONT — ZTE F663N</div>
+        <div class="item-meta">2 units in van</div>
+        <span class="badge ok">Ready to install</span>
+      </div>
+      <div class="card">
+        <div class="item-name">Media Converter — 1G SFP</div>
+        <div class="item-meta">1 unit in van</div>
+        <span class="badge ok">Ready to install</span>
+      </div>
+
+      <div class="section-label">Bulk — Cable &amp; Consumables</div>
+      <div class="card flat">
+        <div>
+          <div class="item-name">Drop Cable — 1-core</div>
+          <div class="item-meta">Flat, self-supporting</div>
+        </div>
+        <div class="qty">180<span class="unit">meters</span></div>
+      </div>
+      <div class="card flat" style="border-color:rgba(245,166,35,.4)">
+        <div>
+          <div class="item-name">Heat-shrink Sleeves</div>
+          <div class="item-meta">Splice protection</div>
+          <span class="badge low">Reorder soon</span>
+        </div>
+        <div class="qty">6<span class="unit">units</span></div>
+      </div>
+      <div class="card flat">
+        <div>
+          <div class="item-name">Fast Connectors — SC/APC</div>
+          <div class="item-meta">Mechanical splice</div>
+        </div>
+        <div class="qty">22<span class="unit">units</span></div>
+      </div>
+
+    </div>
+    <div class="tabbar">
+      <div class="tab active">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg>
+        <span>Stock</span>
+      </div>
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+        <span>Install</span>
+      </div>
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        <span>History</span>
+      </div>
+    </div>
+  </div>
+  <div class="caption">01 — My Stock (tech van, serialized + bulk)</div>
+  </div>
+
+  <!-- PHONE 2: INSTALL / REPLACE ROUTER -->
+  <div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span><span>FTTH Field · 4G</span></div>
+    <div class="trace"></div>
+    <div class="topbar">
+      <div class="eyebrow">Install / Replace</div>
+      <h1>Find premises</h1>
+      <div class="sub">Search by address or account ID</div>
+    </div>
+    <div class="content">
+
+      <div class="wo-chip"><span class="dot"></span> Job #4521 · New Install</div>
+
+      <div class="premise-search">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5A6478" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+        <input placeholder="Ngong Road..." value="Ngong Road">
+      </div>
+
+      <div class="result-item selected">
+        <div class="addr">14B Ngong Road, Nairobi</div>
+        <div class="id">PREM-00842 · Acct #KE-77291</div>
+      </div>
+      <div class="result-item">
+        <div class="addr">14C Ngong Road, Nairobi</div>
+        <div class="id">PREM-00843 · Acct #KE-77293</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="section-label">Currently installed</div>
+      <div class="card">
+        <div class="item-name">ONT — ZTE F609</div>
+        <div class="item-meta">SN: ZTE60912F7A3B</div>
+        <div class="item-meta">MAC: A4:B1:C2:3D:44:5E</div>
+        <div class="item-meta">Installed 14 Mar 2024</div>
+        <span class="badge installed">Active</span>
+      </div>
+
+      <div class="section-label">Replace with</div>
+      <div class="field">
+        <label>New ONT — serial number</label>
+        <input placeholder="Scan or enter serial" value="HW8245Q2-991A">
+      </div>
+      <div class="field">
+        <label>MAC address</label>
+        <input placeholder="Scan or enter MAC" value="F0:9E:63:22:8B:C1">
+      </div>
+      <div class="field">
+        <label>Removal reason</label>
+        <select><option>Faulty</option><option>Upgrade</option><option>Customer cancelled</option><option>Theft</option><option>Other</option></select>
+        <div class="hint">Required to complete a replacement</div>
+      </div>
+
+      <button class="btn-primary">Confirm replacement</button>
+      <button class="btn-secondary">Cancel</button>
+
+    </div>
+    <div class="tabbar">
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg>
+        <span>Stock</span>
+      </div>
+      <div class="tab active">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+        <span>Install</span>
+      </div>
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        <span>History</span>
+      </div>
+    </div>
+  </div>
+  <div class="caption">02 — Replace router (reason required, job-linked)</div>
+  </div>
+
+  <!-- PHONE 3: SITE HISTORY -->
+  <div>
+  <div class="phone">
+    <div class="statusbar"><span>9:41</span><span>FTTH Field · 4G</span></div>
+    <div class="trace"></div>
+    <div class="topbar">
+      <div class="eyebrow">PREM-00842 · Acct #KE-77291</div>
+      <h1>14B Ngong Road</h1>
+      <div class="sub">Router history at this address</div>
+    </div>
+    <div class="content">
+
+      <div class="stat-row">
+        <div class="stat"><div class="num">3</div><div class="lbl">Total routers</div></div>
+        <div class="stat"><div class="num">2</div><div class="lbl">Replacements</div></div>
+      </div>
+
+      <div class="section-label">Timeline</div>
+      <div class="timeline">
+
+        <div class="t-item">
+          <div class="t-date">TODAY · 10:42</div>
+          <div class="t-title">Installed — ONT HW8245Q2-991A</div>
+          <div class="t-meta">MAC F0:9E:63:22:8B:C1 · by J. Kamau</div>
+        </div>
+
+        <div class="t-item removed">
+          <div class="t-date">TODAY · 10:38</div>
+          <div class="t-title">Removed — ONT ZTE60912F7A3B</div>
+          <div class="t-meta">MAC A4:B1:C2:3D:44:5E · by J. Kamau</div>
+          <span class="t-reason">Faulty</span>
+        </div>
+
+        <div class="t-item removed">
+          <div class="t-date">02 Aug 2025</div>
+          <div class="t-title">Removed — ONT HW8245Q1-004C</div>
+          <div class="t-meta">MAC 88:1D:FC:09:AA:12 · by M. Otieno</div>
+          <span class="t-reason upgrade">Upgrade</span>
+        </div>
+
+        <div class="t-item removed">
+          <div class="t-date">14 Mar 2024</div>
+          <div class="t-title">Installed — ONT ZTE60912F7A3B</div>
+          <div class="t-meta">MAC A4:B1:C2:3D:44:5E · by S. Wanjiru</div>
+        </div>
+
+        <div class="t-item removed">
+          <div class="t-date">01 Nov 2023</div>
+          <div class="t-title">Initial install — ONT HW8245Q1-004C</div>
+          <div class="t-meta">MAC 88:1D:FC:09:AA:12 · by S. Wanjiru</div>
+        </div>
+
+      </div>
+
+    </div>
+    <div class="tabbar">
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/></svg>
+        <span>Stock</span>
+      </div>
+      <div class="tab">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 8v4l3 2"/></svg>
+        <span>Install</span>
+      </div>
+      <div class="tab active">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>
+        <span>History</span>
+      </div>
+    </div>
+  </div>
+  <div class="caption">03 — Site history (replacement count + reasons)</div>
+  </div>
+
+</div>
+
+</body>
+</html>
