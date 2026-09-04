@@ -1,19 +1,24 @@
 {
-  "name": "ftth-inventory-api",
+  "name": "ftth-inventory",
   "version": "0.1.0",
-  "description": "Backend API for FTTH field inventory tracking",
-  "main": "src/server.js",
-  "type": "commonjs",
+  "description": "FTTH field inventory tracking — API, warehouse dashboard, and field tech app",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "apps/mobile"
+  ],
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node --watch src/server.js",
-    "migrate": "psql \"$DATABASE_URL\" -f db/schema.sql",
-    "seed": "node db/seed.js"
+    "dev:api": "npm run dev -w apps/api",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:mobile": "npm run start -w apps/mobile",
+    "start:api": "npm start -w apps/api",
+    "build:web": "npm run build -w apps/web",
+    "migrate": "npm run migrate -w apps/api",
+    "seed": "npm run seed -w apps/api",
+    "test": "npm test -w apps/api"
   },
-  "dependencies": {
-    "express": "^4.19.2",
-    "pg": "^8.12.0",
-    "dotenv": "^16.4.5",
-    "cors": "^2.8.5"
+  "engines": {
+    "node": ">=20"
   }
 }

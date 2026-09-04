@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.local
 .env.*.local
+apps/*/.env
+apps/*/.env.local
 
 # Logs
 *.log
@@ -18,6 +20,21 @@ coverage/
 # Build output
 dist/
 build/
+apps/*/dist/
+
+# Vite
+.vite/
+
+# Expo / React Native
+.expo/
+.expo-shared/
+web-build/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+*.orig.*
 
 # Editors & IDEs
 .vscode/
