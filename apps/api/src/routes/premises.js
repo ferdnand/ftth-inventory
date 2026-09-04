@@ -1,66 +1,128 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
+const { asyncHandler, notFound } = require('../lib/errors');
+const {
+  requireFields,
+  intId,
+  nonEmptyString,
+  optionalString,
+  optionalNumber,
+} = require('../lib/validate');
 
 // GET /api/premises/search?q=Ngong
-router.get('/search', async (req, res) => {
-  const { q } = req.query;
-  if (!q || q.trim().length < 2) {
-    return res.json({ results: [] });
-  }
-  try {
+//
+// Under two characters this returns an empty result list with a 200, not an
+// error — the clients render that as a "type at least 2 characters" hint. Both
+// clients depend on this behaviour, so don't turn it into a 400.
+router.get(
+  '/search',
+  asyncHandler(async (req, res) => {
+    const q = (req.query.q || '').trim();
+    if (q.length < 2) {
+      return res.json({ results: [], hint: 'Type at least 2 characters' });
+    }
+
+    // Full-text on the address (which is what the GIN index in 001_init.sql is
+    // for) OR'd with a prefix match on the account id, so both "Ngong" and
+    // "KE-77291" find the same row. websearch_to_tsquery tolerates whatever a
+    // person types without throwing on punctuation.
     const result = await db.query(
       `SELECT id, address, customer_account_id
        FROM customer_premises
-       WHERE address ILIKE $1 OR customer_account_id ILIKE $1
+       WHERE to_tsvector('english', address) @@ websearch_to_tsquery('english', $1)
+          OR address ILIKE $2
+          OR customer_account_id ILIKE $2
        ORDER BY address
        LIMIT 20`,
-      [`%${q}%`]
+      [q, `%${q}%`]
     );
     res.json({ results: result.rows });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Search failed' });
-  }
-});
+  })
+);
+
+// POST /api/premises
+// body: { address, customer_account_id?, gps_lat?, gps_lng? }
+//
+// Any authenticated user can add one: a tech standing at a new address needs to
+// be able to create it before they can install anything there.
+router.post(
+  '/',
+  asyncHandler(async (req, res) => {
+    requireFields(req.body, ['address']);
+    const address = nonEmptyString(req.body.address, 'address', 500);
+    const accountId = optionalString(req.body.customer_account_id, 'customer_account_id', 100);
+    const lat = optionalNumber(req.body.gps_lat, 'gps_lat');
+    const lng = optionalNumber(req.body.gps_lng, 'gps_lng');
+
+    const result = await db.query(
+      `INSERT INTO customer_premises (address, customer_account_id, gps_lat, gps_lng)
+       VALUES ($1, $2, $3, $4)
+       RETURNING *`,
+      [address, accountId, lat, lng]
+    );
+    res.status(201).json({ premises: result.rows[0] });
+  })
+);
+
+// GET /api/premises/:id
+router.get(
+  '/:id',
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+    const result = await db.query(
+      'SELECT * FROM customer_premises WHERE id = $1',
+      [id]
+    );
+    if (result.rows.length === 0) throw notFound('Premises not found');
+    res.json({ premises: result.rows[0] });
+  })
+);
 
 // GET /api/premises/:id/current
-// The router currently installed at this premises (if any)
-router.get('/:id/current', async (req, res) => {
-  try {
+// The router currently installed at this premises, if any.
+//
+// Returns { current: null } with a 200 when there is nothing installed — "no
+// router here" is a normal answer, not a missing resource. (Contrast
+// /history below, which does 404 on an unknown premises id.)
+router.get(
+  '/:id/current',
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
     const result = await db.query(
-      `SELECT inst.id AS installation_id, inst.installed_at,
-              ii.serial_number, ii.mac_address,
-              i.name AS item_name, i.model
+      `SELECT inst.id AS installation_id, inst.installed_at, inst.work_order_id,
+              ii.id AS item_instance_id, ii.serial_number, ii.mac_address,
+              i.name AS item_name, i.manufacturer, i.model,
+              installer.name AS installed_by_name
        FROM installations inst
        JOIN item_instances ii ON ii.id = inst.item_instance_id
        JOIN items i ON i.id = ii.item_id
+       JOIN users installer ON installer.id = inst.installed_by
        WHERE inst.customer_premises_id = $1 AND inst.removed_at IS NULL`,
-      [req.params.id]
+      [id]
     );
     res.json({ current: result.rows[0] || null });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch current installation' });
-  }
-});
+  })
+);
 
 // GET /api/premises/:id/history
-// Full install/removal timeline + replacement count for a premises
-router.get('/:id/history', async (req, res) => {
-  try {
+// Full install/removal timeline + replacement count for a premises.
+router.get(
+  '/:id/history',
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
     const premises = await db.query(
-      `SELECT id, address, customer_account_id FROM customer_premises WHERE id = $1`,
-      [req.params.id]
+      'SELECT id, address, customer_account_id FROM customer_premises WHERE id = $1',
+      [id]
     );
-    if (premises.rows.length === 0) {
-      return res.status(404).json({ error: 'Premises not found' });
-    }
+    if (premises.rows.length === 0) throw notFound('Premises not found');
 
     const timeline = await db.query(
       `SELECT inst.id, inst.installed_at, inst.removed_at, inst.removal_reason,
-              ii.serial_number, ii.mac_address,
-              i.name AS item_name,
+              inst.work_order_id,
+              ii.id AS item_instance_id, ii.serial_number, ii.mac_address,
+              i.name AS item_name, i.manufacturer, i.model,
               installer.name AS installed_by_name,
               remover.name AS removed_by_name
        FROM installations inst
@@ -70,9 +132,10 @@ router.get('/:id/history', async (req, res) => {
        LEFT JOIN users remover ON remover.id = inst.removed_by
        WHERE inst.customer_premises_id = $1
        ORDER BY inst.installed_at DESC`,
-      [req.params.id]
+      [id]
     );
 
+    // One row per installation, so the first router is not a "replacement".
     const totalRouters = timeline.rows.length;
     const replacementCount = Math.max(totalRouters - 1, 0);
 
@@ -82,10 +145,7 @@ router.get('/:id/history', async (req, res) => {
       replacement_count: replacementCount,
       timeline: timeline.rows,
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Failed to fetch history' });
-  }
-});
+  })
+);
 
 module.exports = router;
