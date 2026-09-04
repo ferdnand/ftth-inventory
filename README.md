@@ -5,6 +5,14 @@ serialized items (ONTs, media converters), bulk items (cable, consumables),
 site-based locations, customer premises, router install/replace history,
 and an optional work-order layer.
 
+## Documentation
+
+| Document | What it covers |
+|---|---|
+| `README.md` (this file) | Endpoint list and data-model reference |
+| [PROCESS.md](PROCESS.md) | Setup, architecture, conventions, known gaps |
+| [TUTORIAL.md](TUTORIAL.md) | Hands-on walkthrough of the field workflow |
+
 ## Setup
 
 ```bash
@@ -13,6 +21,13 @@ cp .env.example .env      # edit DATABASE_URL
 npm run migrate           # applies db/schema.sql
 npm run dev                # starts API on :4000
 ```
+
+Then `npm run seed` for sample data and smoke-test IDs.
+
+> `npm run migrate` relies on POSIX shell expansion of `$DATABASE_URL` and does
+> not work on Windows. Run
+> `psql "postgres://user:pass@host:5432/ftth_inventory" -f db/schema.sql`
+> instead — see [PROCESS.md](PROCESS.md) §2.
 
 ## Data model summary
 
