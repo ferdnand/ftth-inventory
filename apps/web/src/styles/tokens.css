@@ -1,0 +1,71 @@
+/* Design tokens.
+ *
+ * The first block is copied verbatim from mockups/mobile_screens.html:9-22 —
+ * the mockup is the source of truth for the palette, so do not re-pick these.
+ *
+ * One deliberate deviation, documented rather than silent: --text-3 (#5A6478)
+ * measures 2.77:1 on --surface and 2.42:1 on --surface-2, below the 4.5:1
+ * needed for normal text. The mockup uses it for form labels, serial statuses
+ * and timeline dates — text a user has to read. Anything load-bearing here uses
+ * --text-2 instead (5.52:1); --text-3 is reserved for genuinely decorative
+ * text. See --label and --meta below.
+ */
+:root {
+  --bg: #0e1420;
+  --surface: #171f2e;
+  --surface-2: #1f2a3d;
+  --border: #28334a;
+  --teal: #2dd4bf;
+  --teal-dim: #1b7a70;
+  --amber: #f5a623;
+  --danger: #ef4565;
+  --success: #34d399;
+  --text-1: #edf1f7;
+  --text-2: #8b96a8;
+  --text-3: #5a6478;
+
+  /* Semantic aliases. Form labels and row metadata must stay readable, so they
+   * point at --text-2 even where the mockup used --text-3. */
+  --label: var(--text-2);
+  --meta: var(--text-2);
+  --decorative: var(--text-3);
+
+  /* Chart palette — validated against the card surface #171F2E.
+   *
+   * The brand teal is NOT in this list. #2DD4BF measures OKLCH L 0.785, above
+   * the 0.67 ceiling for a dark-mode categorical band, so it fails as a series
+   * fill. --series-1 (#17A398) reads as the same teal family, sits in band, and
+   * measures 5.29:1 on surface. Do not "fix" the charts to use the brand teal.
+   */
+  --series-1: #17a398;
+  --series-2: #d95926;
+  --series-3: #9085e9;
+  --series-4: #c98500;
+  --series-5: #d55181;
+
+  /* Ordinal teal ramp, for meters and heatmaps. */
+  --ramp-1: #5eead4;
+  --ramp-2: #2dd4bf;
+  --ramp-3: #17a398;
+  --ramp-4: #0f766e;
+  --ramp-5: #115e59;
+
+  --grid: #28334a;
+  --axis-text: #8b96a8;
+
+  /* Severity, always paired with an icon and a text label — never colour alone. */
+  --status-good: #34d399;
+  --status-warning: #f5a623;
+  --status-serious: #ec835a;
+  --status-critical: #ef4565;
+
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-pill: 20px;
+
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  --nav-width: 232px;
+}
