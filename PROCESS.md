@@ -343,7 +343,8 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 002_auth.sql    users.password_hash
 │   │   │   │   ├── 003_idempotency.sql
 │   │   │   │   ├── 004_restock_requests.sql
-│   │   │   │   └── 005_guards.sql  CHECK constraints behind the app's 409s
+│   │   │   │   ├── 005_guards.sql  CHECK constraints behind the app's 409s
+│   │   │   │   └── 006_catalog_items.sql  The field SKU catalog
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
 │   │   │   ├── app.js              Builds the Express app (auth mount lives here)

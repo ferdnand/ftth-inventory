@@ -70,7 +70,8 @@ Applying 002_auth.sql ... ok
 Applying 003_idempotency.sql ... ok
 Applying 004_restock_requests.sql ... ok
 Applying 005_guards.sql ... ok
-Applied 5 migration(s).
+Applying 006_catalog_items.sql ... ok
+Applied 6 migration(s).
 ```
 
 This works the same in PowerShell, cmd.exe and bash. Run it again and it says
