@@ -53,9 +53,24 @@ async function requireAuth(req, res, next) {
   }
 }
 
+const isAdmin = (user) => user.role === 'admin';
+
+// `admin` passes every requireRole check without being named in one.
+//
+// The alternative — adding 'admin' to each of the ~15 requireRole() lists — was
+// rejected because it fails in the worst direction: the next route someone adds
+// gets whichever roles they happened to type, and an admin quietly cannot use
+// it. The whole point of the role is that there is no table it cannot correct,
+// so the rule belongs at the one place every role check goes through.
+//
+// This is a role check, not an authentication bypass: requireAuth has already
+// verified the token and re-read is_active from the database, and route
+// handlers still apply their own business rules (a terminal work order is still
+// terminal, an installed unit still has to be removed before it is retired).
 function requireRole(...roles) {
   return (req, res, next) => {
     if (!req.user) return next(unauthorized());
+    if (isAdmin(req.user)) return next();
     if (!roles.includes(req.user.role)) {
       return next(forbidden(`This action requires one of: ${roles.join(', ')}`));
     }
@@ -90,6 +105,7 @@ module.exports = {
   requireAuth,
   requireRole,
   isFieldTech,
+  isAdmin,
   assertLocationAccess,
   requireAssignedLocation,
 };

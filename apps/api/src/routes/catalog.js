@@ -220,6 +220,26 @@ router.get(
   })
 );
 
+// The pairing rule between a location's type and its tech, shared by POST and
+// PATCH so a van cannot lose its tech through the edit path.
+async function assertTechSuitable(type, techId) {
+  // A van without a tech is unreachable: the mobile app finds "my stock" by
+  // the tech's assigned_location_id.
+  if (type === 'tech_van' && !techId) {
+    throw badRequest('tech_id is required for a tech_van location');
+  }
+  if (type !== 'tech_van' && techId) {
+    throw badRequest('tech_id only applies to a tech_van location');
+  }
+  if (!techId) return;
+
+  const tech = await db.query('SELECT id, role FROM users WHERE id = $1', [techId]);
+  if (tech.rows.length === 0) throw notFound('tech_id does not match a user');
+  if (tech.rows[0].role !== 'field_tech') {
+    throw badRequest('tech_id must reference a user with the field_tech role');
+  }
+}
+
 // POST /api/locations
 // body: { name, type, tech_id?, address? }
 router.post(
@@ -232,22 +252,7 @@ router.post(
     const techId = optionalIntId(req.body.tech_id, 'tech_id');
     const address = optionalString(req.body.address, 'address', 500);
 
-    // A van without a tech is unreachable: the mobile app finds "my stock" by
-    // the tech's assigned_location_id.
-    if (type === 'tech_van' && !techId) {
-      throw badRequest('tech_id is required for a tech_van location');
-    }
-    if (type !== 'tech_van' && techId) {
-      throw badRequest('tech_id only applies to a tech_van location');
-    }
-
-    if (techId) {
-      const tech = await db.query('SELECT id, role FROM users WHERE id = $1', [techId]);
-      if (tech.rows.length === 0) throw notFound('tech_id does not match a user');
-      if (tech.rows[0].role !== 'field_tech') {
-        throw badRequest('tech_id must reference a user with the field_tech role');
-      }
-    }
+    await assertTechSuitable(type, techId);
 
     const result = await db.query(
       `INSERT INTO locations (name, type, tech_id, address)
@@ -256,6 +261,61 @@ router.post(
       [name, type, techId, address]
     );
     res.status(201).json({ location: result.rows[0] });
+  })
+);
+
+// PATCH /api/locations/:id
+// body: { name?, tech_id?, address? }
+//
+// A location is renamed, readdressed and reassigned far more often than the
+// data model suggests: a van changes driver, a warehouse moves premises. Until
+// this existed the only way to fix any of it was direct SQL.
+//
+// `type` is deliberately not editable, for the same reason items.tracking_type
+// is not: every stock_levels row, item_instance and transaction already booked
+// here was booked against this kind of place. Retire the location and create
+// the right one instead.
+router.patch(
+  '/locations/:id',
+  requireRole('warehouse_staff', 'pm'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const existing = await db.query('SELECT id, type, tech_id FROM locations WHERE id = $1', [id]);
+    if (existing.rows.length === 0) throw notFound('Location not found');
+    const current = existing.rows[0];
+
+    if (req.body.type !== undefined && req.body.type !== current.type) {
+      throw badRequest(
+        'type cannot be changed after a location is created — create a new location instead'
+      );
+    }
+
+    const sets = [];
+    const params = [];
+    const set = (column, value) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+    };
+
+    if (req.body.name !== undefined) set('name', nonEmptyString(req.body.name, 'name', 200));
+    if (req.body.address !== undefined) {
+      set('address', optionalString(req.body.address, 'address', 500));
+    }
+    if (req.body.tech_id !== undefined) {
+      const techId = optionalIntId(req.body.tech_id, 'tech_id');
+      await assertTechSuitable(current.type, techId);
+      set('tech_id', techId);
+    }
+
+    if (sets.length === 0) throw badRequest('No editable fields were provided');
+
+    params.push(id);
+    const result = await db.query(
+      `UPDATE locations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    res.json({ location: result.rows[0] });
   })
 );
 

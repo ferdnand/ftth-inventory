@@ -65,6 +65,31 @@ router.get(
   })
 );
 
+// The admin role is what unlocks every correction path in the API, so the
+// system has to keep at least one account that holds it. Demoting or
+// deactivating the last one would leave a database nobody can fix without
+// direct SQL access — recoverable only by running db/create-admin.js on the
+// server, which is exactly the situation this guard exists to avoid.
+async function assertAdminRemains(userId, actingUserId) {
+  if (userId === actingUserId) {
+    throw badRequest(
+      'You cannot remove your own administrator access — ask another administrator to do it'
+    );
+  }
+
+  const others = await db.query(
+    `SELECT count(*)::int AS remaining
+     FROM users
+     WHERE role = 'admin' AND is_active = TRUE AND id <> $1`,
+    [userId]
+  );
+  if (others.rows[0].remaining === 0) {
+    throw badRequest(
+      'That is the last active administrator. Give another user the admin role first.'
+    );
+  }
+}
+
 async function assertLocationSuitable(locationId, role) {
   if (!locationId) return;
   const location = await db.query('SELECT id, type FROM locations WHERE id = $1', [locationId]);
@@ -119,8 +144,12 @@ router.patch(
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
 
-    const existing = await db.query('SELECT id, role FROM users WHERE id = $1', [id]);
+    const existing = await db.query(
+      'SELECT id, role, is_active FROM users WHERE id = $1',
+      [id]
+    );
     if (existing.rows.length === 0) throw notFound('User not found');
+    const current = existing.rows[0];
 
     const sets = [];
     const params = [];
@@ -131,7 +160,14 @@ router.patch(
 
     const role = req.body.role !== undefined
       ? oneOf(req.body.role, USER_ROLES, 'role')
-      : existing.rows[0].role;
+      : current.role;
+
+    // Both ways an account can stop being a usable admin.
+    const losingAdmin =
+      current.role === 'admin' &&
+      current.is_active &&
+      (role !== 'admin' || req.body.is_active === false);
+    if (losingAdmin) await assertAdminRemains(id, req.user.id);
 
     if (req.body.name !== undefined) set('name', nonEmptyString(req.body.name, 'name', 200));
     if (req.body.email !== undefined) {
@@ -154,7 +190,7 @@ router.patch(
 
     if (sets.length === 0) throw badRequest('No editable fields were provided');
 
-    // A PM removing their own access would lock the last admin out.
+    // Nobody may switch their own account off, whatever their role.
     if (id === req.user.id && req.body.is_active === false) {
       throw badRequest('You cannot deactivate your own account');
     }

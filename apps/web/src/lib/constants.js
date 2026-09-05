@@ -15,7 +15,7 @@ export const INSTANCE_STATUSES = [
   'returned',
   'retired',
 ];
-export const USER_ROLES = ['warehouse_staff', 'field_tech', 'pm'];
+export const USER_ROLES = ['warehouse_staff', 'field_tech', 'pm', 'admin'];
 export const REMOVAL_REASONS = ['faulty', 'upgrade', 'customer_cancelled', 'theft', 'other'];
 export const WORK_ORDER_TYPES = ['new_install', 'repair', 'upgrade', 'removal'];
 export const WORK_ORDER_STATUSES = ['open', 'in_progress', 'completed', 'cancelled'];
@@ -43,6 +43,7 @@ export const LABELS = {
   warehouse_staff: 'Warehouse staff',
   field_tech: 'Field tech',
   pm: 'Project manager',
+  admin: 'Administrator',
 
   customer_cancelled: 'Customer cancelled',
   theft: 'Theft',
@@ -67,6 +68,7 @@ export const LABELS = {
   transfer: 'Transfer',
   issue: 'Issue',
   install: 'Install',
+  adjustment: 'Adjustment',
 };
 
 export const label = (value) => LABELS[value] ?? value ?? '—';

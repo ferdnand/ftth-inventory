@@ -13,7 +13,11 @@ const {
   optionalDate,
   limit,
 } = require('../lib/validate');
-const { CLIENT_TRANSACTION_TYPES, TRANSACTION_TYPES_BY_ROLE } = require('../lib/constants');
+const {
+  TRANSACTION_TYPES,
+  CLIENT_TRANSACTION_TYPES,
+  TRANSACTION_TYPES_BY_ROLE,
+} = require('../lib/constants');
 const { applyMove, lockInstance } = require('../lib/stock');
 const { readKey, findReplay, isIdempotencyConflict } = require('../lib/idempotency');
 const { isFieldTech } = require('../middleware/auth');
@@ -279,8 +283,11 @@ router.get(
     if (req.query.performed_by) {
       clauses.push(`t.performed_by = ${push(intId(req.query.performed_by, 'performed_by'))}`);
     }
+    // Every type in the enum is readable, including the two this endpoint will
+    // not write ('install', 'adjustment') — they are in the audit trail like
+    // anything else, and a feed that could not show them would be lying.
     if (req.query.type) {
-      clauses.push(`t.type = ${push(oneOf(req.query.type, CLIENT_TRANSACTION_TYPES.concat('install'), 'type'))}`);
+      clauses.push(`t.type = ${push(oneOf(req.query.type, TRANSACTION_TYPES, 'type'))}`);
     }
     if (req.query.from) {
       clauses.push(`t.created_at >= ${push(optionalDate(req.query.from, 'from'))}::timestamptz`);

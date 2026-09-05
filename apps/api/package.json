@@ -10,6 +10,7 @@
     "dev": "node --watch src/server.js",
     "migrate": "node db/migrate.js",
     "seed": "node db/seed.js",
+    "create-admin": "node db/create-admin.js",
     "test": "node --test --test-concurrency=1 \"test/*.test.js\""
   },
   "dependencies": {

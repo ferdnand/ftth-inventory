@@ -1,9 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler } = require('../lib/errors');
-const { intId } = require('../lib/validate');
-const { assertLocationAccess } = require('../middleware/auth');
+const { asyncHandler, badRequest, notFound } = require('../lib/errors');
+const {
+  requireFields,
+  intId,
+  optionalNumber,
+  nonEmptyString,
+} = require('../lib/validate');
+const { assertLocationAccess, requireRole } = require('../middleware/auth');
+const { applyMove } = require('../lib/stock');
+const { readKey, findReplay, isIdempotencyConflict } = require('../lib/idempotency');
 
 // GET /api/stock?location_id=5
 // Serialized instances + bulk quantities at one location (a tech's van, a
@@ -106,6 +113,139 @@ router.get(
         low_stock_items: lowStockCount,
       },
     });
+  })
+);
+
+// POST /api/stock/adjustments
+// body: { item_id, location_id, counted_quantity, notes, idempotency_key? }
+//
+// Reconciles a bulk stock level against a physical count. This is the only way
+// to write stock_levels without a movement behind it, and it is admin-only: a
+// stock level that disagrees with the shelf is usually a missing transaction,
+// and the right fix is to record the movement that was missed. An adjustment is
+// what you do when nobody can say what happened.
+//
+// It takes the counted quantity, not a delta — that is what the person holding
+// the clipboard actually knows, and it makes the request safe to repeat: a
+// second submit of the same count is a no-op rather than a second correction.
+//
+// The difference is written as an 'adjustment' transaction so the audit trail
+// still accounts for every unit: stock appearing is an arrival at the location,
+// stock missing is a departure from it. `notes` is required because an
+// adjustment with no stated reason is unauditable.
+router.post(
+  '/adjustments',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    requireFields(req.body, ['item_id', 'location_id', 'notes']);
+    const itemId = intId(req.body.item_id, 'item_id');
+    const locationId = intId(req.body.location_id, 'location_id');
+    const notes = nonEmptyString(req.body.notes, 'notes', 1000);
+    const idempotencyKey = readKey(req.body);
+
+    const counted = optionalNumber(req.body.counted_quantity, 'counted_quantity');
+    if (counted === null) throw badRequest('counted_quantity is required');
+    if (counted < 0) throw badRequest('counted_quantity cannot be negative');
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const replay = await findReplay(client, 'transactions', idempotencyKey);
+      if (replay) {
+        await client.query('ROLLBACK');
+        return res.status(200).json({ transaction: replay, replayed: true });
+      }
+
+      const item = await client.query(
+        'SELECT id, tracking_type FROM items WHERE id = $1',
+        [itemId]
+      );
+      if (item.rows.length === 0) throw notFound('item not found');
+      if (item.rows[0].tracking_type !== 'bulk') {
+        throw badRequest(
+          'That item is serialized — correct the individual unit with ' +
+            'PATCH /api/item-instances/:id instead'
+        );
+      }
+
+      const location = await client.query('SELECT id FROM locations WHERE id = $1', [locationId]);
+      if (location.rows.length === 0) throw notFound('location not found');
+
+      // Same FOR UPDATE lock the movement path takes, so a count landing at the
+      // same moment as a transfer cannot read a balance that is about to change.
+      const current = await client.query(
+        `SELECT quantity FROM stock_levels
+         WHERE item_id = $1 AND location_id = $2
+         FOR UPDATE`,
+        [itemId, locationId]
+      );
+      const onHand = current.rows.length > 0 ? Number(current.rows[0].quantity) : 0;
+      const delta = counted - onHand;
+
+      // The count agrees with the record. Nothing to correct, and a zero-quantity
+      // transaction would violate transaction_quantity_positive anyway.
+      if (delta === 0) {
+        await client.query('COMMIT');
+        return res.json({
+          adjusted: false,
+          item_id: itemId,
+          location_id: locationId,
+          quantity: onHand,
+          transaction: null,
+        });
+      }
+
+      await applyMove(client, {
+        itemId,
+        fromLocationId: delta < 0 ? locationId : null,
+        toLocationId: delta > 0 ? locationId : null,
+        quantity: Math.abs(delta),
+      });
+
+      const txn = await client.query(
+        `INSERT INTO transactions
+          (item_id, quantity, from_location_id, to_location_id, type, performed_by,
+           notes, idempotency_key)
+         VALUES ($1,$2,$3,$4,'adjustment',$5,$6,$7)
+         RETURNING *`,
+        [
+          itemId,
+          Math.abs(delta),
+          delta < 0 ? locationId : null,
+          delta > 0 ? locationId : null,
+          req.user.id,
+          notes,
+          idempotencyKey,
+        ]
+      );
+
+      await client.query('COMMIT');
+      res.status(201).json({
+        adjusted: true,
+        item_id: itemId,
+        location_id: locationId,
+        previous_quantity: onHand,
+        quantity: counted,
+        delta,
+        transaction: txn.rows[0],
+      });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+
+      if (isIdempotencyConflict(err)) {
+        const existing = await db.query(
+          'SELECT * FROM transactions WHERE idempotency_key = $1',
+          [idempotencyKey]
+        );
+        if (existing.rows[0]) {
+          return res.status(200).json({ transaction: existing.rows[0], replayed: true });
+        }
+      }
+      throw err;
+    } finally {
+      client.release();
+    }
   })
 );
 

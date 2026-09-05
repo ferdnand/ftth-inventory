@@ -185,6 +185,11 @@ async function seedWorld() {
     assignedLocationId: warehouse.id,
   });
   const pm = await createUser({ name: 'Test PM', email: 'pm@test.local', role: 'pm' });
+  const admin = await createUser({
+    name: 'Test Admin',
+    email: 'admin@test.local',
+    role: 'admin',
+  });
 
   const ont = await createItem({ name: 'Test ONT', trackingType: 'serialized', reorderThreshold: 2 });
   const cable = await createItem({
@@ -197,7 +202,7 @@ async function seedWorld() {
 
   const premises = await createPremises();
 
-  return { warehouse, van, tech, staff, pm, ont, cable, premises };
+  return { warehouse, van, tech, staff, pm, admin, ont, cable, premises };
 }
 
 // --- HTTP -----------------------------------------------------------------

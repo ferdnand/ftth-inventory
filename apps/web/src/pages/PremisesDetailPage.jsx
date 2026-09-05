@@ -1,14 +1,114 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { useCurrentInstallation, usePremisesHistory, useWorkOrders } from '../hooks/useData';
+import {
+  useCurrentInstallation,
+  usePremisesHistory,
+  useUpdatePremises,
+  useWorkOrders,
+} from '../hooks/useData';
 import { Badge } from '../components/Badge';
+import { Modal } from '../components/Modal';
+import { NumberInput, TextInput } from '../components/fields';
+import { useToast } from '../components/Toast';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { EditServicesDialog, ServicesSummary } from '../components/InstallationServices';
 import { toTimelineEvents } from '../lib/groupSerialized';
 import { formatDate, formatDateTime, formatPremisesCode } from '../lib/format';
 import { label } from '../lib/constants';
+
+// A premises row is the anchor of an install history, so the address on it is
+// what every past visit says the work was done at. Correcting a typo is a
+// back-office job — the API will not take this from a tech.
+function PremisesFormDialog({ premises, onClose }) {
+  const update = useUpdatePremises();
+  const { notify, notifyError } = useToast();
+
+  const [form, setForm] = useState({
+    address: premises.address ?? '',
+    customer_account_id: premises.customer_account_id ?? '',
+    gps_lat: premises.gps_lat ?? '',
+    gps_lng: premises.gps_lng ?? '',
+  });
+  const [errors, setErrors] = useState({});
+  const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    if (!form.address.trim()) {
+      setErrors({ address: 'Required' });
+      return;
+    }
+    try {
+      // null clears a field; '' would be read as "no value supplied".
+      await update.mutateAsync({
+        id: premises.id,
+        address: form.address.trim(),
+        customer_account_id: form.customer_account_id.trim() || null,
+        gps_lat: form.gps_lat === '' ? null : Number(form.gps_lat),
+        gps_lng: form.gps_lng === '' ? null : Number(form.gps_lng),
+      });
+      notify('Premises updated');
+      onClose();
+    } catch (err) {
+      notifyError(err);
+    }
+  }
+
+  return (
+    <Modal
+      title="Edit premises"
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="premises-form"
+            className="btn-primary"
+            disabled={update.isPending}
+          >
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </button>
+        </>
+      }
+    >
+      <form id="premises-form" onSubmit={onSubmit}>
+        <TextInput
+          id="address"
+          label="Address"
+          value={form.address}
+          onChange={set('address')}
+          error={errors.address}
+        />
+        <TextInput
+          id="customer_account_id"
+          label="Account"
+          value={form.customer_account_id}
+          onChange={set('customer_account_id')}
+          hint="The customer reference this address is billed under. Optional."
+        />
+        <NumberInput
+          id="gps_lat"
+          label="Latitude"
+          value={form.gps_lat}
+          onChange={set('gps_lat')}
+          step="any"
+        />
+        <NumberInput
+          id="gps_lng"
+          label="Longitude"
+          value={form.gps_lng}
+          onChange={set('gps_lng')}
+          step="any"
+        />
+      </form>
+    </Modal>
+  );
+}
 
 export function PremisesDetailPage() {
   const { id } = useParams();
@@ -19,6 +119,7 @@ export function PremisesDetailPage() {
   const workOrders = useWorkOrders({ customer_premises_id: premisesId });
   const { hasRole } = useAuth();
   const [editingServices, setEditingServices] = useState(false);
+  const [editingPremises, setEditingPremises] = useState(false);
 
   // Installs happen in the field, so the dashboard's role here is correcting
   // the record afterwards — a mistyped cable length, a splice nobody logged.
@@ -62,9 +163,20 @@ export function PremisesDetailPage() {
         title={premises.address}
         sub={premises.customer_account_id ? `Account ${premises.customer_account_id}` : undefined}
         actions={
-          <Link className="btn-secondary" to="/premises">
-            Back to search
-          </Link>
+          <>
+            {canRecordWork ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={() => setEditingPremises(true)}
+              >
+                Edit premises
+              </button>
+            ) : null}
+            <Link className="btn-secondary" to="/premises">
+              Back to search
+            </Link>
+          </>
         }
       />
 
@@ -130,6 +242,10 @@ export function PremisesDetailPage() {
           current={current.data.services}
           onClose={() => setEditingServices(false)}
         />
+      ) : null}
+
+      {editingPremises ? (
+        <PremisesFormDialog premises={premises} onClose={() => setEditingPremises(false)} />
       ) : null}
 
       <div className="section-label">Site history</div>

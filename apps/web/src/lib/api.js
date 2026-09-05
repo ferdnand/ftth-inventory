@@ -67,6 +67,7 @@ export const api = {
 
   locations: (type) => request('/locations', { params: { type } }),
   createLocation: (body) => request('/locations', { method: 'POST', body }),
+  updateLocation: (id, body) => request(`/locations/${id}`, { method: 'PATCH', body }),
 
   users: (params) => request('/users', { params }),
   createUser: (body) => request('/users', { method: 'POST', body }),
@@ -84,10 +85,15 @@ export const api = {
   transactions: (params) => request('/transactions', { params }),
   createTransaction: (body) => request('/transactions', { method: 'POST', body }),
 
+  // Admin-only. Takes the counted quantity, not a difference — the API works
+  // out the correction, so submitting the same count twice is a no-op.
+  adjustStock: (body) => request('/stock/adjustments', { method: 'POST', body }),
+
   // --- Premises & installations ---
   searchPremises: (q, signal) => request('/premises/search', { params: { q }, signal }),
   premises: (id) => request(`/premises/${id}`),
   createPremises: (body) => request('/premises', { method: 'POST', body }),
+  updatePremises: (id, body) => request(`/premises/${id}`, { method: 'PATCH', body }),
   currentInstallation: (premisesId) => request(`/premises/${premisesId}/current`),
   premisesHistory: (premisesId) => request(`/premises/${premisesId}/history`),
 

@@ -254,6 +254,18 @@ export function useCreateLocation() {
   });
 }
 
+export function useUpdateLocation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }) => api.updateLocation(id, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['locations'] });
+      // A van's tech changed, so who sees it as "my van" changed with it.
+      queryClient.invalidateQueries({ queryKey: ['users'] });
+    },
+  });
+}
+
 export function useCreateUser() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -282,6 +294,14 @@ export function useCreatePremises() {
   });
 }
 
+export function useUpdatePremises() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }) => api.updatePremises(id, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['premises'] }),
+  });
+}
+
 export function useCreateWorkOrder() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -301,6 +321,16 @@ export function useUpdateWorkOrder() {
       queryClient.invalidateQueries({ queryKey: ['work-orders'] });
       queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
+  });
+}
+
+// A stock correction is a stock change like any other: everything that reads a
+// quantity has to be told it moved.
+export function useAdjustStock() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body) => api.adjustStock(body),
+    onSuccess: () => invalidateAfterStockChange(queryClient),
   });
 }
 

@@ -71,7 +71,13 @@ export function AuthProvider({ children }) {
       // Role gating in the client is UX, not security — the API enforces roles
       // server-side. Hiding a nav link the API would reject anyway just avoids
       // showing someone a dead end.
-      hasRole: (...roles) => Boolean(user && roles.includes(user.role)),
+      //
+      // An admin satisfies every check without being listed in one, mirroring
+      // requireRole() in the API. Listing 'admin' at each call site instead
+      // would mean an admin silently losing a screen the moment someone adds
+      // one and forgets.
+      hasRole: (...roles) =>
+        Boolean(user && (user.role === 'admin' || roles.includes(user.role))),
     }),
     [status, user, signIn, signOut]
   );

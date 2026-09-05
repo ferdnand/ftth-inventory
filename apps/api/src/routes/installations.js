@@ -8,6 +8,7 @@ const {
   oneOf,
   intId,
   optionalIntId,
+  optionalDate,
 } = require('../lib/validate');
 const { REMOVAL_REASONS } = require('../lib/constants');
 const { lockInstance, assertInstallable } = require('../lib/stock');
@@ -17,7 +18,7 @@ const {
   writeServiceLines,
   serviceLinesByInstallation,
 } = require('../lib/installationServices');
-const { isFieldTech } = require('../middleware/auth');
+const { isFieldTech, requireRole } = require('../middleware/auth');
 
 // Where a unit coming out of service should be parked. A tech carries it in
 // their van; warehouse staff must say explicitly.
@@ -317,6 +318,104 @@ router.post(
     } finally {
       client.release();
     }
+  })
+);
+
+// PATCH /api/installations/:id
+// body: { installed_at?, removed_at?, work_order_id?, removal_reason? }
+//
+// Admin-only correction of an installation record. Everything a tech does in
+// the field writes this row as a side effect of an action — installing,
+// removing, replacing — and those are the paths to use while the facts are
+// still true. This is for the record being wrong about facts that already
+// happened: a job done on Friday and entered on Monday, a visit that was never
+// linked to its work order, a removal filed under the wrong reason.
+//
+// What it will not do is change WHICH unit is installed WHERE, or whether an
+// installation is still live. Those are the two things the rest of the schema
+// hangs off — item_instances.status, the one-active-install-per-premises index,
+// the audit trail — and moving them from here would leave the other rows
+// describing a different world. Remove and re-install instead.
+router.patch(
+  '/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    rejectFields(
+      req.body,
+      ['customer_premises_id', 'item_instance_id', 'installed_by', 'removed_by'],
+      'a correction cannot rewrite who did what, or to which unit — ' +
+        'remove the installation and record it again'
+    );
+
+    const existing = await db.query(
+      `SELECT id, installed_at, removed_at, removal_reason FROM installations WHERE id = $1`,
+      [id]
+    );
+    if (existing.rows.length === 0) throw notFound('Installation not found');
+    const current = existing.rows[0];
+
+    const sets = [];
+    const params = [];
+    const set = (column, value) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+    };
+
+    const installedAt = optionalDate(req.body.installed_at, 'installed_at');
+    if (req.body.installed_at !== undefined) {
+      if (!installedAt) throw badRequest('installed_at cannot be cleared');
+      set('installed_at', installedAt);
+    }
+
+    if (req.body.removed_at !== undefined) {
+      if (!current.removed_at) {
+        throw conflict(
+          'This installation is still live. Use POST /api/installations/:premisesId/remove ' +
+            'so the unit goes back into stock too.'
+        );
+      }
+      const removedAt = optionalDate(req.body.removed_at, 'removed_at');
+      if (!removedAt) {
+        throw conflict(
+          'Clearing removed_at would put a removed unit back into service on paper only. ' +
+            'Record a new installation instead.'
+        );
+      }
+      set('removed_at', removedAt);
+    }
+
+    if (req.body.removal_reason !== undefined) {
+      // removal_reason_required_if_removed: the database refuses a removed row
+      // with no reason, so say so here rather than letting it surface as a 400
+      // from a constraint name.
+      if (!current.removed_at) {
+        throw badRequest('removal_reason only applies to an installation that has been removed');
+      }
+      set('removal_reason', oneOf(req.body.removal_reason, REMOVAL_REASONS, 'removal_reason'));
+    }
+
+    if (req.body.work_order_id !== undefined) {
+      set('work_order_id', optionalIntId(req.body.work_order_id, 'work_order_id'));
+    }
+
+    if (sets.length === 0) throw badRequest('No editable fields were provided');
+
+    const startsAt = installedAt ?? current.installed_at;
+    const endsAt = req.body.removed_at !== undefined ? req.body.removed_at : current.removed_at;
+    if (endsAt && new Date(endsAt) < new Date(startsAt)) {
+      throw badRequest('removed_at cannot be before installed_at');
+    }
+
+    params.push(id);
+    const result = await db.query(
+      `UPDATE installations SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+
+    const grouped = await serviceLinesByInstallation(db, [id]);
+    res.json({ installation: { ...result.rows[0], services: grouped[id] ?? [] } });
   })
 );
 

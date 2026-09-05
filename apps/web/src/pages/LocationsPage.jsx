@@ -1,7 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { useCreateLocation, useLocations, useStockByLocation, useUsers } from '../hooks/useData';
+import {
+  useCreateLocation,
+  useLocations,
+  useStockByLocation,
+  useUpdateLocation,
+  useUsers,
+} from '../hooks/useData';
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
@@ -11,12 +17,24 @@ import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
 import { LOCATION_TYPES, label } from '../lib/constants';
 
-function LocationFormDialog({ onClose }) {
+// One dialog for both jobs. Passing an `existing` location switches it to an
+// edit: the type field locks, because the API refuses to change it once stock
+// has been booked against the location.
+function LocationFormDialog({ onClose, existing }) {
   const create = useCreateLocation();
+  const update = useUpdateLocation();
   const techs = useUsers({ role: 'field_tech', is_active: true });
   const { notify, notifyError } = useToast();
 
-  const [form, setForm] = useState({ name: '', type: 'warehouse', tech_id: '', address: '' });
+  const editing = Boolean(existing);
+  const saving = editing ? update.isPending : create.isPending;
+
+  const [form, setForm] = useState({
+    name: existing?.name ?? '',
+    type: existing?.type ?? 'warehouse',
+    tech_id: existing?.tech_id ? String(existing.tech_id) : '',
+    address: existing?.address ?? '',
+  });
   const [errors, setErrors] = useState({});
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
@@ -30,14 +48,22 @@ function LocationFormDialog({ onClose }) {
     setErrors(next);
     if (Object.keys(next).length > 0) return;
 
+    // PATCH takes null to clear an address, where POST wants the field left off
+    // altogether — the same empty box means two different things.
+    const body = {
+      name: form.name.trim(),
+      tech_id: form.type === 'tech_van' ? Number(form.tech_id) : editing ? null : undefined,
+      address: form.address.trim() || (editing ? null : undefined),
+    };
+
     try {
-      await create.mutateAsync({
-        name: form.name.trim(),
-        type: form.type,
-        tech_id: form.type === 'tech_van' ? Number(form.tech_id) : undefined,
-        address: form.address.trim() || undefined,
-      });
-      notify(`${form.name.trim()} created`);
+      if (editing) {
+        await update.mutateAsync({ id: existing.id, ...body });
+        notify(`${form.name.trim()} updated`);
+      } else {
+        await create.mutateAsync({ ...body, type: form.type });
+        notify(`${form.name.trim()} created`);
+      }
       onClose();
     } catch (err) {
       notifyError(err);
@@ -46,20 +72,15 @@ function LocationFormDialog({ onClose }) {
 
   return (
     <Modal
-      title="New location"
+      title={editing ? `Edit ${existing.name}` : 'New location'}
       onClose={onClose}
       footer={
         <>
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button
-            type="submit"
-            form="location-form"
-            className="btn-primary"
-            disabled={create.isPending}
-          >
-            {create.isPending ? 'Saving…' : 'Create location'}
+          <button type="submit" form="location-form" className="btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create location'}
           </button>
         </>
       }
@@ -78,7 +99,13 @@ function LocationFormDialog({ onClose }) {
           label="Type"
           value={form.type}
           onChange={set('type')}
+          disabled={editing}
           options={LOCATION_TYPES.map((t) => ({ value: t, label: label(t) }))}
+          hint={
+            editing
+              ? 'Fixed once created — every stock row here was booked against this kind of place.'
+              : undefined
+          }
         />
         {form.type === 'tech_van' ? (
           <Select
@@ -105,6 +132,8 @@ export function LocationsPage() {
   const totals = useStockByLocation();
   const [type, setType] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const canEdit = hasRole('warehouse_staff', 'pm');
 
   const totalsById = new Map((totals.data ?? []).map((t) => [t.location_id, t]));
   const rows = (locations.data ?? []).filter((l) => !type || l.type === type);
@@ -140,6 +169,27 @@ export function LocationsPage() {
       numeric: true,
       render: (row) => totalsById.get(row.id)?.bulk_item_count ?? 0,
     },
+    ...(canEdit
+      ? [
+          {
+            key: 'actions',
+            header: '',
+            render: (row) => (
+              <button
+                type="button"
+                className="btn-secondary"
+                onClick={(event) => {
+                  // The row itself opens the stock view.
+                  event.stopPropagation();
+                  setEditing(row);
+                }}
+              >
+                Edit
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -149,7 +199,7 @@ export function LocationsPage() {
         title="Locations"
         sub="Warehouses, sites and tech vans. Click a row for what it holds."
         actions={
-          hasRole('warehouse_staff', 'pm') ? (
+          canEdit ? (
             <button type="button" className="btn-primary" onClick={() => setShowForm(true)}>
               New location
             </button>
@@ -192,6 +242,9 @@ export function LocationsPage() {
       )}
 
       {showForm ? <LocationFormDialog onClose={() => setShowForm(false)} /> : null}
+      {editing ? (
+        <LocationFormDialog existing={editing} onClose={() => setEditing(null)} />
+      ) : null}
     </div>
   );
 }

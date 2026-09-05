@@ -56,12 +56,14 @@ export const LABELS = {
   field_tech: 'Field tech',
   warehouse_staff: 'Warehouse staff',
   pm: 'Project manager',
+  admin: 'Administrator',
 
   receive: 'Received',
   transfer: 'Transferred',
   issue: 'Issued',
   install: 'Installed',
   return: 'Returned',
+  adjustment: 'Corrected',
 };
 
 export const label = (value) => LABELS[value] ?? value ?? '—';

@@ -91,7 +91,7 @@ npm run seed
 ```
 
 ```
-Seeded users: 5
+Seeded users: 6
 Seeded locations
 Seeded items: 6
 Seeded item instances: 2
@@ -110,11 +110,22 @@ new_ont_instance_id (in van, ready to install): 1
 field tech:       john.kamau@ftth.local
 warehouse staff:  grace.njeri@ftth.local
 project manager:  peter.mwangi@ftth.local
+administrator:    alice.wambui@ftth.local
 password (all):   ftth-dev-password
 ```
 
-Note the three accounts — the rest of this tutorial switches between them,
+Note the four accounts — the rest of this tutorial switches between them,
 because **who you are signed in as changes what you can do.**
+
+The administrator is the odd one out: it is not a fourth job, it is the account
+that can go back and fix a record the normal workflow has already written wrong.
+Part 11 is about that. On a database you have *not* seeded, there is no admin
+yet and nobody who can create one over the API — make the first one directly:
+
+```bash
+cd apps/api
+ADMIN_NAME="Your Name" ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='…' npm run create-admin
+```
 
 ### 1.4 Start the API
 
@@ -167,6 +178,9 @@ STAFF=$(curl -s localhost:4000/api/auth/login -H 'Content-Type: application/json
 
 TECH=$(curl -s localhost:4000/api/auth/login -H 'Content-Type: application/json' \
   -d '{"email":"john.kamau@ftth.local","password":"ftth-dev-password"}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+
+ADMIN=$(curl -s localhost:4000/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"alice.wambui@ftth.local","password":"ftth-dev-password"}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
 ```
 
 Then every request carries `-H "Authorization: Bearer $STAFF"`.
@@ -656,6 +670,168 @@ Filter state lives in the URL, so a report is a link you can send someone.
 
 ---
 
+## Part 11 — Corrections (the administrator account)
+
+Everything up to here has been the system working as intended: stock arrives,
+moves, gets installed, and every step leaves an audit row. This part is about
+the other half of real operations — the record being wrong, and nobody being
+able to undo what has already been written.
+
+Sign in as `alice.wambui@ftth.local`. She is an `admin`, and the difference
+shows up in three places.
+
+### 11.1 An admin reaches every screen
+
+There is no "admin section". The administrator passes every role check in the
+API, so the dashboard shows the union of what everyone else sees: the stock
+screens warehouse staff get, the reports, and the Users page a PM gets. A route
+added next month does not have to remember to include the role.
+
+What that does **not** mean is a way around the rules. Try to retire a unit that
+is currently installed at a customer address:
+
+```bash
+curl -s -X PATCH localhost:4000/api/item-instances/3 \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"status":"retired"}'
+```
+
+```json
+{ "error": "Serial ZTE60912F7A3B is installed at a customer premises — remove it first" }
+```
+
+That is the same 409 anyone else gets. The unit is one half of a live
+installation; removing it through the installation endpoint fixes both rows
+together, and there is no path that fixes only one.
+
+### 11.2 Fixing a record: a serial keyed wrong
+
+A carton of ONTs was received last week and one serial went in with a lowercase
+l where the label has a 1 — `HW8245Q2-99lA`. Every scan of that unit since has
+failed to find it. Set it to what the label actually says:
+
+```bash
+curl -s -X PATCH localhost:4000/api/item-instances/1 \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"serial_number":"HW8245Q2-991A","notes":"Keyed wrong off the carton"}'
+```
+
+Nothing physically moved, so this is not a transfer — but the row changed, so
+the API writes an `adjustment` transaction against Alice's name carrying that
+note. Look it up:
+
+```bash
+curl -s "localhost:4000/api/transactions?item_instance_id=1&type=adjustment" \
+  -H "Authorization: Bearer $ADMIN"
+```
+
+The same PATCH also takes `mac_address`, `status` and `current_location_id`, for
+a unit recorded in the warehouse that has been riding around in a van for a
+week. Warehouse staff sending any of those get a 400 pointing them at
+`POST /api/transactions` instead — because for them, a unit in the wrong place
+is a movement nobody recorded, not a typo.
+
+### 11.3 Reconciling stock against a physical count
+
+The shelf says 2380 m of drop cable. The seeded warehouse says 2400. Nobody can
+say what happened to the other 20.
+
+On the dashboard: **Locations → the warehouse → Bulk**, then **Correct** on the
+row. Over curl:
+
+```bash
+curl -s -X POST localhost:4000/api/stock/adjustments \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"item_id":4,"location_id":1,"counted_quantity":2380,"notes":"Physical count, quarter end"}'
+```
+
+```json
+{
+  "adjusted": true,
+  "previous_quantity": 2400,
+  "quantity": 2380,
+  "delta": -20,
+  "transaction": { "type": "adjustment", "quantity": "20", "from_location_id": 1, "…": "…" }
+}
+```
+
+Three things about that request are deliberate:
+
+- **It takes the count, not the difference.** That is what the person holding
+  the clipboard knows. It also makes the request safe to repeat — submit the
+  same count twice and the second one answers `"adjusted": false` and writes
+  nothing.
+- **`notes` is required.** An adjustment with no stated reason is unauditable,
+  and this is the one endpoint that can change a quantity with no movement
+  behind it.
+- **It is admin-only.** A stock level that disagrees with the shelf is usually a
+  movement somebody forgot to record, and the right fix for that is to record
+  the movement. Reach for an adjustment when nobody can say what happened.
+
+Serialized items are not counted this way — `POST /api/stock/adjustments`
+rejects them. A serialized unit is corrected individually, as in 11.2, because
+"there are three on the shelf" does not say *which* three.
+
+### 11.4 Correcting the record of a visit
+
+A job done on Friday was entered on Monday, and the timeline shows it on the
+wrong day. Only the dates, the work order link and the removal reason are
+editable — never who installed what, or where:
+
+```bash
+curl -s -X PATCH localhost:4000/api/installations/1 \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"installed_at":"2026-01-15T09:00:00Z"}'
+
+# The same PATCH takes work_order_id, to link a visit to the job it was for
+# (or null, to unlink one filed against the wrong job).
+```
+
+```bash
+# Rewriting who did it is refused outright
+curl -s -X PATCH localhost:4000/api/installations/1 \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"installed_by":4}'
+# {"error":"installed_by must not be sent — a correction cannot rewrite who did what, …"}
+```
+
+To change *which* unit is installed at an address, replace it. That is a real
+event, and it belongs in the timeline as one.
+
+### 11.5 The system will not let you lose the last admin
+
+```bash
+curl -s -X PATCH localhost:4000/api/users/6 \
+  -H "Authorization: Bearer $ADMIN" -H 'Content-Type: application/json' \
+  -d '{"role":"pm"}'
+```
+
+```json
+{ "error": "You cannot remove your own administrator access — ask another administrator to do it" }
+```
+
+And with a different admin doing it, if that is the only one left:
+
+```json
+{ "error": "That is the last active administrator. Give another user the admin role first." }
+```
+
+A database with no admin is one nobody can correct through the API at all. If it
+happens anyway, `npm run create-admin -w apps/api` on the server is the way back
+— it promotes an existing account and resets its password.
+
+### What an admin still cannot do
+
+| | Why |
+|---|---|
+| Edit or delete a `transactions` row | The audit trail is append-only. A correction is a *new* row, never an edit to an old one. |
+| Change a location's `type` or an item's `tracking_type` | Every stock row already booked there was booked against that kind of place, or that storage model. |
+| Set a unit's status to `installed` by hand | That is a claim about a customer address. Only `POST /api/installations` can make it true on both sides. |
+| Reopen a completed or cancelled work order | Terminal is terminal — `completed_at` would stop meaning anything. |
+| Edit a unit that is currently installed | Remove it through the installation endpoints; that fixes both rows at once. |
+
+---
+
 ## Common workflows at a glance
 
 | I want to… | Where | Endpoint |
@@ -677,6 +853,12 @@ Filter state lives in the URL, so a report is a link you can send someone.
 | Fulfil a restock request | dashboard → Restock queue | `PATCH /api/restock-requests/:id` |
 | Progress a job | either | `PATCH /api/work-orders/:id` |
 | Add a user / assign a van | dashboard → Users (PM only) | `POST` / `PATCH /api/users` |
+| Rename a location / reassign a van | dashboard → Locations → Edit | `PATCH /api/locations/:id` |
+| Fix a customer address | dashboard → Premises → Edit premises | `PATCH /api/premises/:id` |
+| Fix a serial or MAC on a unit | admin, over the API | `PATCH /api/item-instances/:id` |
+| Reconcile stock against a count | dashboard → Locations → Correct (admin) | `POST /api/stock/adjustments` |
+| Correct the date on an install | admin, over the API | `PATCH /api/installations/:id` |
+| Create the first admin | the server's shell | `npm run create-admin -w apps/api` |
 | See what needs reordering | dashboard → Reports | `GET /api/reports/low-stock` |
 | Record work done on a visit | mobile → install / Record work | `PUT /api/installations/:id/services` |
 | See labour billed this month | dashboard → Reports → Services | `GET /api/reports/services` |
@@ -701,6 +883,10 @@ Filter state lives in the URL, so a report is a link you can send someone.
 | Metro: "Unable to resolve module" for something installed | npm workspace hoisting | See the escape hatch in `apps/mobile/metro.config.js` |
 | `Not enough stock at that location` | Movement would go negative | Expected. Lower the quantity. |
 | `An active router already exists at this premises` | Installing where one is installed | Use replace |
+| `is installed at a customer premises — remove it first` | Editing a unit that is in service | Remove or replace it; that fixes both rows |
+| `Only an administrator can change: …` | Staff account editing a unit's serial or location | A unit in the wrong place is a movement — `POST /api/transactions` |
+| `That is the last active administrator` | Demoting the only admin | Give another user the admin role first |
+| `This action requires one of: admin` | Non-admin on a correction endpoint | Sign in as an admin, or `npm run create-admin -w apps/api` |
 | `removal_reason is required` | Replace without a reason | Pick one of the five |
 | `npm test` refuses to run | `TEST_DATABASE_URL` unset or same as `DATABASE_URL` | Create a separate test database |
 | Seed fails on duplicate key | Tables not empty | Truncate the data tables, or drop and recreate |

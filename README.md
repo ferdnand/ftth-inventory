@@ -52,19 +52,22 @@ cannot connect.
 | `item_instances` | One row per serialized unit. Has `serial_number` + `mac_address`, a status, and a current location/holder. |
 | `stock_levels` | Quantity of a bulk item at a location. Cannot go negative. |
 | `locations` | `warehouse`, `site`, or `tech_van`. A van carries a `tech_id`. |
-| `users` | `warehouse_staff`, `field_tech`, `pm`. `assigned_location_id` is what the mobile app resolves as "my van". |
+| `users` | `warehouse_staff`, `field_tech`, `pm`, `admin`. `assigned_location_id` is what the mobile app resolves as "my van". |
 | `customer_premises` | A customer address, with an optional account reference. |
 | `installations` | Install/removal history per premises. `removal_reason` is required whenever `removed_at` is set, and only one active installation per premises is possible — both enforced in the database. |
 | `work_orders` | Optional job layer. Every link to one is nullable. |
 | `restock_requests` / `restock_request_lines` | A tech asks the warehouse for bulk stock; fulfilling the request is what moves it. |
-| `transactions` | Append-only audit trail of every stock movement. |
+| `transactions` | Append-only audit trail of every stock movement, corrections included (`adjustment`). |
 | `schema_migrations` | Applied migrations, with checksums. |
 
 ## API endpoints
 
 Everything except `/api/health` and `/api/auth/login` requires
 `Authorization: Bearer <token>`. Role column: **T** field_tech · **W**
-warehouse_staff · **P** pm.
+warehouse_staff · **P** pm · **A** admin.
+
+**A passes every role check**, so it is listed only where a route is
+admin-only. See "The admin role" below.
 
 **Auth**
 
@@ -80,11 +83,12 @@ warehouse_staff · **P** pm.
 | `GET` | `/api/stock?location_id=` | any (T: own location only) |
 | `GET` | `/api/stock/summary?location_id=` | any (T: own location only) |
 | `POST` | `/api/transactions` | any (T: `issue`/`return`/`faulty` via own van) |
+| `POST` | `/api/stock/adjustments` | A (reconcile a bulk level against a count) |
 | `GET` | `/api/transactions?item_instance_id=&item_id=&work_order_id=&location_id=&type=&from=&to=&limit=` | any (T: scoped to own van) |
 | `POST` | `/api/item-instances` | W P |
 | `GET` | `/api/item-instances?serial=&mac=&item_id=&status=&location_id=` | any (T: own location) |
 | `GET` | `/api/item-instances/:id` | any |
-| `PATCH` | `/api/item-instances/:id` | W P (retire only) |
+| `PATCH` | `/api/item-instances/:id` | W P (retire only) · A (serial, MAC, status, location) |
 
 **Premises and installations**
 
@@ -92,12 +96,14 @@ warehouse_staff · **P** pm.
 |---|---|---|
 | `GET` | `/api/premises/search?q=` | any |
 | `POST` | `/api/premises` | any |
+| `PATCH` | `/api/premises/:id` | W P |
 | `GET` | `/api/premises/:id` | any |
 | `GET` | `/api/premises/:id/current` | any |
 | `GET` | `/api/premises/:id/history` | any |
 | `POST` | `/api/installations` | any |
 | `POST` | `/api/installations/:premisesId/replace` | any |
 | `PUT` | `/api/installations/:id/services` | any (T: own active install) |
+| `PATCH` | `/api/installations/:id` | A (correct dates, work order, removal reason) |
 
 **Catalog and admin**
 
@@ -108,7 +114,7 @@ warehouse_staff · **P** pm.
 | `GET` | `/api/services?include_inactive=` | any |
 | `POST` / `PATCH` | `/api/services`, `/api/services/:id` | W P |
 | `GET` | `/api/locations?type=` | any |
-| `POST` | `/api/locations` | W P |
+| `POST` / `PATCH` | `/api/locations`, `/api/locations/:id` | W P (`type` is not editable) |
 | `GET` | `/api/users?role=&is_active=`, `/api/users/:id` | W P |
 | `POST` / `PATCH` | `/api/users`, `/api/users/:id` | P |
 
@@ -143,6 +149,38 @@ warehouse_staff · **P** pm.
 | `GET` | `/api/reports/installation-trends?from&to&interval=week\|month` | W P |
 | `GET` | `/api/reports/services?from&to&group_by=service\|tech` | W P |
 | `GET` | `/api/reports/stock-by-location` | W P |
+
+## The admin role
+
+`admin` is not a fourth job title alongside warehouse staff, field techs and
+PMs. It is the account that owns the data: the one that can correct a record
+when the normal workflow has already written the wrong thing.
+
+- It passes every `requireRole` check without being named in one, so a route
+  added tomorrow cannot quietly lock an admin out.
+- It is the only role that can reconcile a stock level against a physical count
+  (`POST /api/stock/adjustments`), rewrite a serial or MAC on a unit, or correct
+  the dates on an installation record.
+- Corrections are not silent. A stock adjustment and a unit correction both
+  write an `adjustment` row to `transactions`, naming who changed what and why.
+- It cannot break the invariants the schema depends on: a unit that is installed
+  must still be removed through the installation endpoints, a location's `type`
+  and an item's `tracking_type` are still fixed at creation, and `transactions`
+  is still append-only.
+- The API refuses to demote or deactivate the last active admin, and refuses to
+  let an admin remove their own admin access.
+
+Create the first one on the machine that can reach the database — `POST
+/api/users` needs somebody signed in, and a fresh database has nobody:
+
+```bash
+cd apps/api
+ADMIN_NAME="Your Name" ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='…' npm run create-admin
+```
+
+Re-running it for an existing address promotes that user to admin, reactivates
+them, and resets their password — which is also the recovery path if an admin
+account is ever lost.
 
 ## Design decisions worth knowing before you change anything
 

@@ -133,10 +133,28 @@ npm run seed
 Inserts users (with password hashes **and** assigned locations), a warehouse, a
 tech van, an item catalog, two in-stock ONTs, warehouse and van bulk stock, one
 customer premises, and one already-active installation. It prints the reference
-IDs and the sign-in credentials.
+IDs and the sign-in credentials. One of the seeded users is an `admin`.
 
 Seeding assumes empty tables. To re-seed, truncate the data tables (leaving
 `schema_migrations` alone) or drop and recreate the database.
+
+### Create the first admin (on a database you are not seeding)
+
+`POST /api/users` needs somebody already signed in, and a freshly migrated
+database has nobody. This script writes the row directly, so run it on a machine
+that can reach the database:
+
+```bash
+cd apps/api
+ADMIN_NAME="Your Name" ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='…' npm run create-admin
+```
+
+Prefer the environment variables to the `--email` / `--name` / `--password`
+flags it also accepts: an argument list shows up in shell history and in `ps`.
+
+Re-running it for an existing address promotes that user to admin, reactivates
+them, and resets their password. That is deliberate — it is the recovery path
+when the last admin account is lost, which the API itself will not help with.
 
 ---
 
@@ -216,6 +234,7 @@ What is covered, in rough order of importance:
 | Replace | A removal cannot be recorded without a reason (app 400 **and** DB `CHECK`) |
 | Install | A unit must be `in_stock`, and in the acting tech's own van |
 | Auth | No token → 401, wrong role → 403, deactivated user's live token → 401 |
+| Admin | Reaches every correction path, still cannot break an invariant, and cannot be the last one demoted |
 | Scoping | A field tech cannot read another location's stock |
 | Idempotency | The same key replayed returns the original row, and moves stock once |
 | Restock | Fulfilment moves the stock atomically, and fails as a whole if it cannot |
@@ -361,6 +380,40 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   nav links only keep someone off a page the API would reject anyway. The API is
   what enforces authorization.
 
+- **`admin` passes every role check at one place, not fifteen.** `requireRole`
+  in `src/middleware/auth.js` lets the role through before it looks at the list
+  it was given, and `hasRole` in the web client mirrors it. Adding `'admin'` to
+  each `requireRole(...)` call instead would fail in the worst direction: the
+  next route someone writes gets whichever roles they happened to type, and an
+  admin quietly cannot use it. The whole point of the role is that there is no
+  table it cannot correct.
+
+- **An admin is bounded by the invariants, not by the role checks.** It is a
+  role check, not an authentication bypass. An installed unit still has to be
+  removed through the installation endpoints, a location's `type` and an item's
+  `tracking_type` are still fixed at creation, a terminal work order is still
+  terminal, and `transactions` is still append-only. Anything an admin *can*
+  correct is a route that keeps the rest of the record consistent while it does
+  so.
+
+- **A correction is still a movement in the audit trail.** `POST
+  /api/stock/adjustments` and an admin `PATCH /api/item-instances/:id` both
+  write an `adjustment` transaction naming who changed what and why — stock
+  appearing is an arrival at the location, stock missing is a departure from it.
+  The type exists (migration 010) precisely so a correction cannot be recorded
+  as a `transfer` or a `receive`, which would be a lie about what happened.
+  `POST /api/transactions` refuses to write it, exactly as it refuses `install`.
+
+- **The stock adjustment endpoint takes the counted quantity, not a delta.**
+  That is what the person holding the clipboard actually knows, and it makes the
+  request safe to repeat: a second submit of the same count is a no-op rather
+  than a second correction.
+
+- **The system keeps at least one admin.** `PATCH /api/users/:id` refuses to
+  demote or deactivate the last active one, and refuses to let an admin remove
+  their own admin access. Losing it would leave a database nobody can correct
+  without shell access to `db/create-admin.js`.
+
 ---
 
 ## 6. Folder structure
@@ -380,7 +433,9 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 006_catalog_items.sql  The field SKU catalog
 │   │   │   │   ├── 007_services.sql  Billable labour, split out of items
 │   │   │   │   ├── 008_merge_sleeves.sql  Duplicate catalog row merged
-│   │   │   │   └── 009_installation_services.sql  Labour ↔ installation
+│   │   │   │   ├── 009_installation_services.sql  Labour ↔ installation
+│   │   │   │   └── 010_admin_role.sql  admin role + 'adjustment' movement
+│   │   │   ├── create-admin.js     Bootstrap/recover an admin (no API needed)
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
 │   │   │   ├── app.js              Builds the Express app (auth mount lives here)

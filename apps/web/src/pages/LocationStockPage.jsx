@@ -1,14 +1,110 @@
 import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { useLocations, useStock } from '../hooks/useData';
+import { useAdjustStock, useLocations, useStock } from '../hooks/useData';
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Meter } from '../components/Meter';
+import { Modal } from '../components/Modal';
+import { NumberInput, TextArea } from '../components/fields';
+import { useToast } from '../components/Toast';
+import { newIdempotencyKey } from '../lib/api';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { groupSerialized } from '../lib/groupSerialized';
 import { label } from '../lib/constants';
+
+// Reconciling a shelf against the record. Admin-only, because a stock level
+// that disagrees with what is there is usually a movement nobody recorded — and
+// the right fix for that is to record the movement, not to overwrite the count.
+function AdjustStockDialog({ locationId, row, onClose }) {
+  const adjust = useAdjustStock();
+  const { notify, notifyError } = useToast();
+
+  const [counted, setCounted] = useState(String(row.quantity));
+  const [notes, setNotes] = useState('');
+  const [errors, setErrors] = useState({});
+  // Held across retries so a resubmit after a dropped response corrects once.
+  const [idempotencyKey] = useState(newIdempotencyKey);
+
+  const delta = counted === '' ? null : Number(counted) - Number(row.quantity);
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    const next = {};
+    if (counted === '' || Number.isNaN(Number(counted))) next.counted = 'Enter the counted amount';
+    else if (Number(counted) < 0) next.counted = 'Cannot be negative';
+    if (!notes.trim()) next.notes = 'Say why the record was wrong';
+    setErrors(next);
+    if (Object.keys(next).length > 0) return;
+
+    try {
+      const result = await adjust.mutateAsync({
+        item_id: row.item_id,
+        location_id: locationId,
+        counted_quantity: Number(counted),
+        notes: notes.trim(),
+        idempotency_key: idempotencyKey,
+      });
+      notify(
+        result.adjusted === false
+          ? `${row.item_name} already matched the count`
+          : `${row.item_name} corrected to ${counted} ${row.unit_of_measure}`
+      );
+      onClose();
+    } catch (err) {
+      notifyError(err);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Correct ${row.item_name}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="adjust-form"
+            className="btn-primary"
+            disabled={adjust.isPending}
+          >
+            {adjust.isPending ? 'Saving…' : 'Record correction'}
+          </button>
+        </>
+      }
+    >
+      <form id="adjust-form" onSubmit={onSubmit}>
+        <NumberInput
+          id="counted"
+          label={`Counted (${row.unit_of_measure})`}
+          value={counted}
+          onChange={setCounted}
+          error={errors.counted}
+          step="any"
+          min="0"
+          hint={
+            delta === null || delta === 0
+              ? `The record says ${row.quantity}. Enter what is actually there.`
+              : `${delta > 0 ? '+' : ''}${delta} ${row.unit_of_measure} against the recorded ${row.quantity}.`
+          }
+        />
+        <TextArea
+          id="notes"
+          label="Reason"
+          value={notes}
+          onChange={setNotes}
+          error={errors.notes}
+          rows={3}
+          hint="Kept on the audit trail against your name. Required."
+        />
+      </form>
+    </Modal>
+  );
+}
 
 export function LocationStockPage() {
   const { id } = useParams();
@@ -18,6 +114,8 @@ export function LocationStockPage() {
   const stock = useStock(locationId);
   const locations = useLocations();
   const [grouped, setGrouped] = useState(true);
+  const [adjusting, setAdjusting] = useState(null);
+  const canAdjust = hasRole('admin');
 
   const location = (locations.data ?? []).find((l) => l.id === locationId);
   const groups = useMemo(
@@ -65,6 +163,23 @@ export function LocationStockPage() {
       // untracked item.
       render: (row) => (row.is_low_stock === true ? <Badge variant="low">Reorder soon</Badge> : null),
     },
+    ...(canAdjust
+      ? [
+          {
+            key: 'actions',
+            header: '',
+            render: (row) => (
+              <button
+                type="button"
+                className="btn-secondary btn-sm"
+                onClick={() => setAdjusting(row)}
+              >
+                Correct
+              </button>
+            ),
+          },
+        ]
+      : []),
   ];
 
   const flatColumns = [
@@ -209,6 +324,14 @@ export function LocationStockPage() {
           />
         </>
       )}
+
+      {adjusting ? (
+        <AdjustStockDialog
+          locationId={locationId}
+          row={adjusting}
+          onClose={() => setAdjusting(null)}
+        />
+      ) : null}
     </div>
   );
 }

@@ -3,7 +3,8 @@ const db = require('../src/lib/db');
 
 // Every seeded user gets the same throwaway password so the tutorial can show
 // one login for any role. Fine for a local development database; a real
-// deployment creates users through POST /api/users with real passwords.
+// deployment creates its first admin with db/create-admin.js and everyone else
+// through POST /api/users, with real passwords.
 const DEV_PASSWORD = 'ftth-dev-password';
 
 async function seed() {
@@ -17,7 +18,8 @@ async function seed() {
       ('Mary Otieno', 'mary.otieno@ftth.local', 'field_tech', $1),
       ('Sarah Wanjiru', 'sarah.wanjiru@ftth.local', 'field_tech', $1),
       ('Grace Njeri', 'grace.njeri@ftth.local', 'warehouse_staff', $1),
-      ('Peter Mwangi', 'peter.mwangi@ftth.local', 'pm', $1)
+      ('Peter Mwangi', 'peter.mwangi@ftth.local', 'pm', $1),
+      ('Alice Wambui', 'alice.wambui@ftth.local', 'admin', $1)
     RETURNING id, name
   `,
     [passwordHash]
@@ -141,6 +143,7 @@ async function seed() {
   console.log('field tech:       john.kamau@ftth.local');
   console.log('warehouse staff:  grace.njeri@ftth.local');
   console.log('project manager:  peter.mwangi@ftth.local');
+  console.log('administrator:    alice.wambui@ftth.local');
   console.log('password (all):  ', DEV_PASSWORD);
 
   await db.pool.end();

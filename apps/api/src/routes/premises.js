@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler, notFound } = require('../lib/errors');
+const { asyncHandler, badRequest, notFound } = require('../lib/errors');
 const {
   requireFields,
   intId,
@@ -9,6 +9,7 @@ const {
   optionalString,
   optionalNumber,
 } = require('../lib/validate');
+const { requireRole } = require('../middleware/auth');
 const { serviceLinesByInstallation } = require('../lib/installationServices');
 
 // GET /api/premises/search?q=Ngong
@@ -63,6 +64,51 @@ router.post(
       [address, accountId, lat, lng]
     );
     res.status(201).json({ premises: result.rows[0] });
+  })
+);
+
+// PATCH /api/premises/:id
+// body: { address?, customer_account_id?, gps_lat?, gps_lng? }
+//
+// Creating a premises is open to any authenticated user because a tech standing
+// at a new address has to be able to; editing one is not. A tech who mistyped
+// an address raises it with the warehouse — the row is already the anchor for
+// an install history, and silently renaming it changes what past work says it
+// was done on.
+router.patch(
+  '/:id',
+  requireRole('warehouse_staff', 'pm'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const sets = [];
+    const params = [];
+    const set = (column, value) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+    };
+
+    if (req.body.address !== undefined) {
+      set('address', nonEmptyString(req.body.address, 'address', 500));
+    }
+    if (req.body.customer_account_id !== undefined) {
+      set(
+        'customer_account_id',
+        optionalString(req.body.customer_account_id, 'customer_account_id', 100)
+      );
+    }
+    if (req.body.gps_lat !== undefined) set('gps_lat', optionalNumber(req.body.gps_lat, 'gps_lat'));
+    if (req.body.gps_lng !== undefined) set('gps_lng', optionalNumber(req.body.gps_lng, 'gps_lng'));
+
+    if (sets.length === 0) throw badRequest('No editable fields were provided');
+
+    params.push(id);
+    const result = await db.query(
+      `UPDATE customer_premises SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    if (result.rows.length === 0) throw notFound('Premises not found');
+    res.json({ premises: result.rows[0] });
   })
 );
 
