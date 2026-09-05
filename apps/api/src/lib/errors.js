@@ -31,6 +31,7 @@ const CONSTRAINT_MESSAGES = {
     'An active router already exists at this premises. Use /replace instead.',
   uq_users_email_lower: 'A user with that email already exists',
   users_email_key: 'A user with that email already exists',
+  services_name_key: 'A service with that name already exists',
   item_instances_serial_number_key: 'That serial number is already registered',
   item_instances_mac_address_key: 'That MAC address is already registered',
   stock_quantity_non_negative: 'That movement would leave stock negative',

@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler, badRequest, conflict, notFound } = require('../lib/errors');
+const { asyncHandler, badRequest, conflict, forbidden, notFound } = require('../lib/errors');
 const {
   requireFields,
   rejectFields,
@@ -12,6 +12,11 @@ const {
 const { REMOVAL_REASONS } = require('../lib/constants');
 const { lockInstance, assertInstallable } = require('../lib/stock');
 const { readKey, findReplay, isIdempotencyConflict } = require('../lib/idempotency');
+const {
+  parseServiceLines,
+  writeServiceLines,
+  serviceLinesByInstallation,
+} = require('../lib/installationServices');
 const { isFieldTech } = require('../middleware/auth');
 
 // Where a unit coming out of service should be parked. A tech carries it in
@@ -42,6 +47,15 @@ function assertInstanceReachable(user, instance) {
   }
 }
 
+// Echoes the work just recorded, with the service names the client needs to
+// show it, so a successful install does not have to be followed by a re-fetch.
+// Skipped when no labour was recorded, which is the common case.
+async function servicesFor(installationId, lines) {
+  if (lines.length === 0) return [];
+  const grouped = await serviceLinesByInstallation(db, [installationId]);
+  return grouped[installationId] ?? [];
+}
+
 async function assertPremisesExists(client, premisesId) {
   const result = await client.query('SELECT id FROM customer_premises WHERE id = $1', [
     premisesId,
@@ -51,7 +65,8 @@ async function assertPremisesExists(client, premisesId) {
 
 // POST /api/installations
 // First-time install at a premises with no active router.
-// body: { customer_premises_id, item_instance_id, work_order_id?, idempotency_key? }
+// body: { customer_premises_id, item_instance_id, work_order_id?, services?, idempotency_key? }
+//   services: [{ service_id, quantity?, notes? }] — labour performed on this visit
 //
 // installed_by is derived from the token and must not be sent.
 router.post(
@@ -67,6 +82,7 @@ router.post(
     const premisesId = intId(req.body.customer_premises_id, 'customer_premises_id');
     const instanceId = intId(req.body.item_instance_id, 'item_instance_id');
     const workOrderId = optionalIntId(req.body.work_order_id, 'work_order_id');
+    const serviceLines = parseServiceLines(req.body.services);
     const idempotencyKey = readKey(req.body);
     const installedBy = req.user.id;
 
@@ -109,6 +125,8 @@ router.post(
         [premisesId, instanceId, installedBy, workOrderId, idempotencyKey]
       );
 
+      await writeServiceLines(client, installation.rows[0].id, serviceLines);
+
       await client.query(
         `UPDATE item_instances
          SET status = 'installed', current_location_id = NULL,
@@ -135,7 +153,8 @@ router.post(
       );
 
       await client.query('COMMIT');
-      res.status(201).json({ installation: installation.rows[0] });
+      const services = await servicesFor(installation.rows[0].id, serviceLines);
+      res.status(201).json({ installation: { ...installation.rows[0], services } });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       if (isIdempotencyConflict(err)) {
@@ -157,7 +176,10 @@ router.post(
 // POST /api/installations/:premisesId/replace
 // Removes the active router (reason required) and installs a new one.
 // body: { new_item_instance_id, removal_reason, work_order_id?,
-//         return_to_location_id?, idempotency_key? }
+//         return_to_location_id?, services?, idempotency_key? }
+//
+// `services` records the labour of THIS visit against the new installation, not
+// against the one being closed out — the work was done today.
 //
 // NOTE: :premisesId is a customer_premises id, NOT an installation id.
 router.post(
@@ -178,6 +200,7 @@ router.post(
       req.user,
       optionalIntId(req.body.return_to_location_id, 'return_to_location_id')
     );
+    const serviceLines = parseServiceLines(req.body.services);
     const idempotencyKey = readKey(req.body);
     const performedBy = req.user.id;
 
@@ -246,6 +269,7 @@ router.post(
          WHERE id = $1`,
         [newInstanceId]
       );
+      await writeServiceLines(client, newInstallation.rows[0].id, serviceLines);
 
       // 3. Log both movements in the audit trail
       await client.query(
@@ -276,7 +300,8 @@ router.post(
       );
 
       await client.query('COMMIT');
-      res.status(201).json({ installation: newInstallation.rows[0] });
+      const services = await servicesFor(newInstallation.rows[0].id, serviceLines);
+      res.status(201).json({ installation: { ...newInstallation.rows[0], services } });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       if (isIdempotencyConflict(err)) {
@@ -288,6 +313,62 @@ router.post(
           return res.status(200).json({ installation: existing.rows[0], replayed: true });
         }
       }
+      throw err;
+    } finally {
+      client.release();
+    }
+  })
+);
+
+// PUT /api/installations/:id/services
+// Replaces the recorded labour for one installation.
+// body: { services: [{ service_id, quantity?, notes? }] }
+//
+// PUT rather than POST because the body is the complete list: sending [] is how
+// you clear it, and re-sending the same list twice leaves the same rows. A tech
+// on a flaky connection can retry safely without needing an idempotency key.
+//
+// This exists because the warehouse dashboard never creates an installation —
+// installs happen in the field — so without it the web UI could only ever read
+// the work, never correct a mistyped cable length.
+router.put(
+  '/:id/services',
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+    const lines = parseServiceLines(req.body?.services);
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const found = await client.query(
+        'SELECT id, installed_by, removed_at FROM installations WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (found.rows.length === 0) throw notFound('Installation not found');
+      const installation = found.rows[0];
+
+      // A tech corrects their own job while it is still the live one. Fixing
+      // the record of a visit that has since been replaced is a back-office
+      // job, and closed-out history should not move under a report's feet.
+      if (isFieldTech(req.user)) {
+        if (Number(installation.installed_by) !== req.user.id) {
+          throw forbidden('You can only record work on an installation you performed');
+        }
+        if (installation.removed_at) {
+          throw conflict(
+            'This router has since been replaced — ask the warehouse to amend the record'
+          );
+        }
+      }
+
+      await writeServiceLines(client, id, lines);
+      await client.query('COMMIT');
+
+      const grouped = await serviceLinesByInstallation(db, [id]);
+      res.json({ installation_id: id, services: grouped[id] ?? [] });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
       throw err;
     } finally {
       client.release();

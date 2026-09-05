@@ -71,7 +71,10 @@ Applying 003_idempotency.sql ... ok
 Applying 004_restock_requests.sql ... ok
 Applying 005_guards.sql ... ok
 Applying 006_catalog_items.sql ... ok
-Applied 6 migration(s).
+Applying 007_services.sql ... ok
+Applying 008_merge_sleeves.sql ... ok
+Applying 009_installation_services.sql ... ok
+Applied 9 migration(s).
 ```
 
 This works the same in PowerShell, cmd.exe and bash. Run it again and it says
@@ -369,6 +372,38 @@ Same interaction as the mockup, honest about the rule underneath: **you can only
 install a unit you are actually carrying.** That is also the correct
 authorization posture.
 
+### Recording the work, not just the hardware
+
+Under the unit picker is **Work performed (optional)** — the services catalog
+the warehouse maintains under **Catalog → Services** on the dashboard. Tap a
+service to include it.
+
+Flat-rate work ('job') is the whole interaction: tap Splicing and move on, no
+keyboard. Only work charged per metre asks for a number, because that is the
+only case where the amount is not always one:
+
+```bash
+curl -s localhost:4000/api/installations   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"customer_premises_id": 2, "item_instance_id": 1,
+       "services": [{"service_id": 6},
+                    {"service_id": 3, "quantity": 40, "notes": "Along the back fence"}]}'
+```
+
+The lines are written in the same transaction as the install, so a bad
+`service_id` rolls the whole thing back — no half-recorded visit where the
+router moved but the paperwork did not.
+
+Got home and remembered a splice? The site-history screen has **Record work
+performed**. It is a `PUT` of the complete list, so retrying on a bad connection
+is safe:
+
+```bash
+curl -s -X PUT localhost:4000/api/installations/2/services   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json'   -d '{"services": [{"service_id": 6}]}'
+```
+
+A tech may only amend an installation they performed, and only while it is still
+the active one. Correcting a visit that has since been replaced is a warehouse
+job — closed history should not move under a report's feet.
+
 ### The 409 is a first-class path
 
 Premises 1 already has an active router from the seed, so the install screen
@@ -596,6 +631,26 @@ stacked charts sharing one filter row rather than one chart with two y-axes:
 rather than skipped, so a gap reads as a gap instead of a straight line through
 it.
 
+### Services
+
+Labour performed on site, which is deliberately **absent from Consumption** — a
+splice is not stock leaving the business, and folding the two together would
+make "consumed" mean two different things in one number.
+
+Two things this report is careful about:
+
+- **The date is when the work was done**, taken from `installations.installed_at`,
+  not when someone typed it in. A tech recording Friday's splice on Monday still
+  lands in Friday.
+- **Quantities are never summed across units.** 40 m of cable run plus one splice
+  is not 41 of anything, so the totals tile reads `412 m · 37 jobs`. Grouped by
+  tech, quantity is omitted entirely and the count of services performed is
+  shown instead.
+
+```bash
+curl -s "localhost:4000/api/reports/services?group_by=service&from=2026-01-01"   -H "Authorization: Bearer $TOKEN"
+```
+
 Every chart has a **Table** toggle, so no value is only reachable by hovering.
 Filter state lives in the URL, so a report is a link you can send someone.
 
@@ -623,6 +678,8 @@ Filter state lives in the URL, so a report is a link you can send someone.
 | Progress a job | either | `PATCH /api/work-orders/:id` |
 | Add a user / assign a van | dashboard → Users (PM only) | `POST` / `PATCH /api/users` |
 | See what needs reordering | dashboard → Reports | `GET /api/reports/low-stock` |
+| Record work done on a visit | mobile → install / Record work | `PUT /api/installations/:id/services` |
+| See labour billed this month | dashboard → Reports → Services | `GET /api/reports/services` |
 
 ---
 

@@ -97,6 +97,7 @@ warehouse_staff · **P** pm.
 | `GET` | `/api/premises/:id/history` | any |
 | `POST` | `/api/installations` | any |
 | `POST` | `/api/installations/:premisesId/replace` | any |
+| `PUT` | `/api/installations/:id/services` | any (T: own active install) |
 
 **Catalog and admin**
 
@@ -104,6 +105,8 @@ warehouse_staff · **P** pm.
 |---|---|---|
 | `GET` | `/api/items?include_inactive=` | any |
 | `POST` / `PATCH` | `/api/items`, `/api/items/:id` | W P |
+| `GET` | `/api/services?include_inactive=` | any |
+| `POST` / `PATCH` | `/api/services`, `/api/services/:id` | W P |
 | `GET` | `/api/locations?type=` | any |
 | `POST` | `/api/locations` | W P |
 | `GET` | `/api/users?role=&is_active=`, `/api/users/:id` | W P |
@@ -138,6 +141,7 @@ warehouse_staff · **P** pm.
 | `GET` | `/api/reports/consumption?from&to&group_by=item\|category\|location` | W P |
 | `GET` | `/api/reports/tech-activity?from&to` | W P |
 | `GET` | `/api/reports/installation-trends?from&to&interval=week\|month` | W P |
+| `GET` | `/api/reports/services?from&to&group_by=service\|tech` | W P |
 | `GET` | `/api/reports/stock-by-location` | W P |
 
 ## Design decisions worth knowing before you change anything

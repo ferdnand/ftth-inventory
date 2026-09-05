@@ -105,6 +105,10 @@ export const api = {
   createTransaction: (body) => request('/transactions', { method: 'POST', body }),
 
   items: () => request('/items'),
+  services: () => request('/services'),
+  // The complete list, not an addition — sending [] clears the recorded work.
+  setInstallationServices: (installationId, services) =>
+    request(`/installations/${installationId}/services`, { method: 'PUT', body: { services } }),
   locations: (type) => request('/locations', { params: { type } }),
 
   workOrders: (params) => request('/work-orders', { params }),

@@ -23,7 +23,10 @@ const NAV = [
   },
   {
     title: 'Catalog',
-    links: [{ to: '/items', text: 'Items' }],
+    links: [
+      { to: '/items', text: 'Items' },
+      { to: '/services', text: 'Services' },
+    ],
   },
   {
     title: 'Reports',
@@ -32,6 +35,7 @@ const NAV = [
       { to: '/reports/consumption', text: 'Consumption', roles: ['warehouse_staff', 'pm'] },
       { to: '/reports/tech-activity', text: 'Tech activity', roles: ['warehouse_staff', 'pm'] },
       { to: '/reports/installations', text: 'Installations', roles: ['warehouse_staff', 'pm'] },
+      { to: '/reports/services', text: 'Services', roles: ['warehouse_staff', 'pm'] },
     ],
   },
   {

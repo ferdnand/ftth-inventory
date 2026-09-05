@@ -61,6 +61,10 @@ export const api = {
   createItem: (body) => request('/items', { method: 'POST', body }),
   updateItem: (id, body) => request(`/items/${id}`, { method: 'PATCH', body }),
 
+  services: (params) => request('/services', { params }),
+  createService: (body) => request('/services', { method: 'POST', body }),
+  updateService: (id, body) => request(`/services/${id}`, { method: 'PATCH', body }),
+
   locations: (type) => request('/locations', { params: { type } }),
   createLocation: (body) => request('/locations', { method: 'POST', body }),
 
@@ -91,6 +95,9 @@ export const api = {
   // NOTE: the path segment is a customer_premises id, not an installation id.
   replaceRouter: (premisesId, body) =>
     request(`/installations/${premisesId}/replace`, { method: 'POST', body }),
+  // The complete list, not an addition — sending [] clears the recorded work.
+  setInstallationServices: (installationId, services) =>
+    request(`/installations/${installationId}/services`, { method: 'PUT', body: { services } }),
 
   // --- Work orders ---
   workOrders: (params) => request('/work-orders', { params }),
@@ -110,5 +117,6 @@ export const api = {
   reportConsumption: (params) => request('/reports/consumption', { params }),
   reportTechActivity: (params) => request('/reports/tech-activity', { params }),
   reportInstallationTrends: (params) => request('/reports/installation-trends', { params }),
+  reportServices: (params) => request('/reports/services', { params }),
   reportStockByLocation: () => request('/reports/stock-by-location'),
 };

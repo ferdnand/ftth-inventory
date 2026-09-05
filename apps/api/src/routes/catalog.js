@@ -120,6 +120,83 @@ router.patch(
 );
 
 // ------------------------------------------------------------
+// Services (billable labour)
+// ------------------------------------------------------------
+// Deliberately thinner than items: a service has no tracking_type, no
+// manufacturer and no reorder threshold, because there is nothing on hand to
+// count. See 007_services.sql.
+
+// GET /api/services?include_inactive=true
+router.get(
+  '/services',
+  asyncHandler(async (req, res) => {
+    const includeInactive = optionalBoolean(req.query.include_inactive, 'include_inactive');
+    const where = includeInactive ? '' : 'WHERE is_active = TRUE';
+    const result = await db.query(`SELECT * FROM services ${where} ORDER BY name`);
+    res.json({ services: result.rows });
+  })
+);
+
+// POST /api/services
+// body: { name, unit_of_measure, description? }
+router.post(
+  '/services',
+  requireRole('warehouse_staff', 'pm'),
+  asyncHandler(async (req, res) => {
+    requireFields(req.body, ['name', 'unit_of_measure']);
+
+    const name = nonEmptyString(req.body.name, 'name', 200);
+    const unitOfMeasure = nonEmptyString(req.body.unit_of_measure, 'unit_of_measure', 50);
+    const description = optionalString(req.body.description, 'description', 1000);
+
+    const result = await db.query(
+      `INSERT INTO services (name, unit_of_measure, description)
+       VALUES ($1,$2,$3)
+       RETURNING *`,
+      [name, unitOfMeasure, description]
+    );
+    res.status(201).json({ service: result.rows[0] });
+  })
+);
+
+// PATCH /api/services/:id
+router.patch(
+  '/services/:id',
+  requireRole('warehouse_staff', 'pm'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const sets = [];
+    const params = [];
+    const set = (column, value) => {
+      params.push(value);
+      sets.push(`${column} = $${params.length}`);
+    };
+
+    if (req.body.name !== undefined) set('name', nonEmptyString(req.body.name, 'name', 200));
+    if (req.body.unit_of_measure !== undefined) {
+      set('unit_of_measure', nonEmptyString(req.body.unit_of_measure, 'unit_of_measure', 50));
+    }
+    if (req.body.description !== undefined) {
+      set('description', optionalString(req.body.description, 'description', 1000));
+    }
+    if (req.body.is_active !== undefined) {
+      set('is_active', optionalBoolean(req.body.is_active, 'is_active'));
+    }
+
+    if (sets.length === 0) throw badRequest('No editable fields were provided');
+
+    params.push(id);
+    const result = await db.query(
+      `UPDATE services SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+      params
+    );
+    if (result.rows.length === 0) throw notFound('Service not found');
+    res.json({ service: result.rows[0] });
+  })
+);
+
+// ------------------------------------------------------------
 // Locations
 // ------------------------------------------------------------
 

@@ -516,6 +516,23 @@ td.num {
   gap: 0 12px;
 }
 
+/* A checkbox with a two-line label beside it: the name, then what it means.
+   The whole row is the label, so the meta line is a hit target too. */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+.check-row input[type='checkbox'] {
+  margin-top: 3px;
+  flex: none;
+}
+.check-row .item-name,
+.check-row .item-meta {
+  display: block;
+}
+
 .form-card {
   background: var(--surface);
   border: 1px solid var(--border);

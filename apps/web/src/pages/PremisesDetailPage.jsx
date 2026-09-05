@@ -1,9 +1,11 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { useAuth } from '../auth/AuthContext';
 import { useCurrentInstallation, usePremisesHistory, useWorkOrders } from '../hooks/useData';
 import { Badge } from '../components/Badge';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
+import { EditServicesDialog, ServicesSummary } from '../components/InstallationServices';
 import { toTimelineEvents } from '../lib/groupSerialized';
 import { formatDate, formatDateTime, formatPremisesCode } from '../lib/format';
 import { label } from '../lib/constants';
@@ -15,6 +17,12 @@ export function PremisesDetailPage() {
   const history = usePremisesHistory(premisesId);
   const current = useCurrentInstallation(premisesId);
   const workOrders = useWorkOrders({ customer_premises_id: premisesId });
+  const { hasRole } = useAuth();
+  const [editingServices, setEditingServices] = useState(false);
+
+  // Installs happen in the field, so the dashboard's role here is correcting
+  // the record afterwards — a mistyped cable length, a splice nobody logged.
+  const canRecordWork = hasRole('warehouse_staff', 'pm');
 
   const events = useMemo(
     () => toTimelineEvents(history.data?.timeline ?? []),
@@ -99,11 +107,30 @@ export function PremisesDetailPage() {
               <div className="item-meta">
                 Installed {formatDate(current.data.installed_at)} by {current.data.installed_by_name}
               </div>
+              <ServicesSummary services={current.data.services} />
             </div>
             <Badge variant="installed">Active</Badge>
           </div>
+          {canRecordWork ? (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setEditingServices(true)}
+            >
+              {current.data.services?.length ? 'Edit recorded work' : 'Record work performed'}
+            </button>
+          ) : null}
         </div>
       )}
+
+      {editingServices && current.data ? (
+        <EditServicesDialog
+          installationId={current.data.installation_id}
+          premisesId={premisesId}
+          current={current.data.services}
+          onClose={() => setEditingServices(false)}
+        />
+      ) : null}
 
       <div className="section-label">Site history</div>
       {events.length === 0 ? (
@@ -131,6 +158,9 @@ export function PremisesDetailPage() {
                     {event.serial}
                     {event.mac ? ` · ${event.mac}` : ''} · {event.by ?? 'unknown'}
                   </div>
+                  {event.kind === 'installed' ? (
+                    <ServicesSummary services={event.services} />
+                  ) : null}
                   {event.reason ? (
                     <span
                       className={`t-reason ${event.reason === 'upgrade' ? 'upgrade' : ''}`.trim()}

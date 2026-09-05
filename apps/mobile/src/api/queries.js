@@ -6,6 +6,7 @@ export const keys = {
   me: ['me'],
   stock: (locationId) => ['stock', locationId],
   items: ['items'],
+  services: ['services'],
   locations: (type) => ['locations', type ?? 'all'],
   premisesSearch: (q) => ['premises', 'search', q],
   currentInstallation: (id) => ['premises', id, 'current'],
@@ -45,6 +46,14 @@ export const useItems = () =>
     queryFn: () => api.items(),
     select: (d) => d.items,
     staleTime: 10 * 60_000,
+  });
+
+export const useServices = () =>
+  useQuery({
+    queryKey: keys.services,
+    queryFn: () => api.services(),
+    select: (d) => d.services,
+    staleTime: 5 * 60_000,
   });
 
 export const useLocations = (type) =>
@@ -126,6 +135,18 @@ export function useReplaceRouter() {
   return useMutation({
     mutationFn: ({ premisesId, ...body }) => api.replaceRouter(premisesId, body),
     onSuccess: (_data, variables) => invalidateInstallation(queryClient, variables.premisesId),
+  });
+}
+
+// Recorded labour changes nothing about stock, so only the premises views go
+// stale — not the van.
+export function useSetInstallationServices() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ installationId, services }) =>
+      api.setInstallationServices(installationId, services),
+    onSuccess: (_data, variables) =>
+      queryClient.invalidateQueries({ queryKey: ['premises', variables.premisesId] }),
   });
 }
 

@@ -275,6 +275,39 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   The application checks are a fast, friendly path to a 4xx; the constraints are
   the actual guarantee. Keep both. The tests assert both paths deliberately.
 
+- **Stock and labour are different tables.** `items` is what you hold, move and
+  count; `services` (splicing, cable runs, a PPPoE setup) is work performed and
+  has no location, quantity or serial number. They were briefly one table with a
+  'Service' category — `007_services.sql` separates them, because a service in
+  `items` shows up in every stock report as a permanent zero and nothing stops a
+  transfer of "5 splicings" into a van.
+
+- **`services.name` is UNIQUE; `items.name` is not.** That omission is how
+  'Sleeves' and 'Heat-shrink Sleeves' both reached the catalog, splitting one
+  item's stock across two rows until `008_merge_sleeves.sql` folded them back
+  together. Adding the constraint to `items` now would need a merge pass over
+  existing duplicates first — until then, check before inserting.
+
+- **Services are reported separately from consumption, on purpose.**
+  `/api/reports/consumption` means stock that left the business; a splice never
+  was stock. `/api/reports/services` is its own endpoint for that reason, and it
+  never sums a quantity across units of measure — 40 m plus 1 job is 41 of
+  nothing, so totals come back split by unit and the by-tech grouping reports
+  counts with `quantity` explicitly NULL rather than a misleading number.
+
+- **Labour hangs off the installation, not the address.** `installation_services`
+  references `installations`, so replacing a router years later keeps each
+  visit's work separate — the same premises can be spliced twice and the
+  timeline shows both. It is the only `ON DELETE CASCADE` in the schema: these
+  rows describe one installation and mean nothing without it. The `service_id`
+  reference does *not* cascade — a service in use deactivates, it never deletes.
+
+- **`PUT /api/installations/:id/services` takes the complete list.** Sending
+  `[]` clears it and re-sending the same list twice leaves the same rows, so a
+  tech on a bad connection can retry without an idempotency key. It exists
+  because the warehouse dashboard never *creates* an installation — installs
+  happen in the field — so without it the web UI could only read the work.
+
 - **The auth mount is load-bearing.** `app.use('/api', requireAuth)` sits above
   the domain routers in `src/app.js`. That ordering is what makes a newly added
   router **fail closed**. A router mounted above that line is silently public.
@@ -344,7 +377,10 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 003_idempotency.sql
 │   │   │   │   ├── 004_restock_requests.sql
 │   │   │   │   ├── 005_guards.sql  CHECK constraints behind the app's 409s
-│   │   │   │   └── 006_catalog_items.sql  The field SKU catalog
+│   │   │   │   ├── 006_catalog_items.sql  The field SKU catalog
+│   │   │   │   ├── 007_services.sql  Billable labour, split out of items
+│   │   │   │   ├── 008_merge_sleeves.sql  Duplicate catalog row merged
+│   │   │   │   └── 009_installation_services.sql  Labour ↔ installation
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
 │   │   │   ├── app.js              Builds the Express app (auth mount lives here)
@@ -356,13 +392,14 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── validate.js     Hand-rolled 400 helpers
 │   │   │   │   ├── stock.js        applyMove — the non-negative rule
 │   │   │   │   ├── idempotency.js  Replay detection
+│   │   │   │   ├── installationServices.js  Labour lines: parse, write, read
 │   │   │   │   ├── constants.js    Enum arrays + per-role movement table
 │   │   │   │   └── serialize.js    publicUser — password_hash can never leak
 │   │   │   ├── middleware/auth.js  requireAuth, requireRole, location scoping
 │   │   │   └── routes/             auth, stock, premises, installations,
 │   │   │                           transactions, catalog, users,
 │   │   │                           itemInstances, restockRequests, reports
-│   │   └── test/                   helpers.js + 4 *.test.js files
+│   │   └── test/                   helpers.js + 6 *.test.js files
 │   ├── web/
 │   │   └── src/
 │   │       ├── main.jsx  mount.jsx  router.jsx
@@ -372,16 +409,19 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │       ├── auth/               AuthProvider · AuthContext · tokenStore · routes
 │   │       ├── components/         AppShell · DataTable · Meter · Badge · Toast
 │   │       │                       Modal · fields · states · PageHeader
+│   │       │                       InstallationServices (summary + editor)
 │   │       ├── charts/             chartTheme · ChartFrame · marks · LazyMarks
 │   │       ├── hooks/              useData (queries + mutations) · useDebounced
-│   │       └── pages/              login · overview · items · locations · stock
-│   │                               premises · workorders · restock · users · reports
+│   │       └── pages/              login · overview · items · services · locations
+│   │                               stock · premises · workorders · restock · users
+│   │                               reports
 │   └── mobile/
 │       ├── app/                    expo-router file routes
 │       │   ├── _layout.jsx         fonts, providers, auth gate
 │       │   ├── login.jsx  profile.jsx  restock.jsx  +not-found.jsx
 │       │   ├── (tabs)/             _layout · stock · install · history
 │       │   └── premises/           [id].jsx · new.jsx · [id]/install · [id]/replace
+│       │                           [id]/work  (amend recorded labour)
 │       ├── src/
 │       │   ├── theme.js            The mockup's tokens, ported
 │       │   ├── lib/                config (LAN host) · format · constants · groupSerialized

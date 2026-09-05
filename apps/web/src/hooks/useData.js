@@ -8,6 +8,7 @@ import {
   normalizeTransactions,
   normalizeLowStock,
   normalizeConsumption,
+  normalizeServicesReport,
 } from '../lib/num';
 
 // Coercion happens in `select`, so a component never receives a NUMERIC as the
@@ -21,6 +22,14 @@ export const useItems = (params) =>
     queryFn: () => api.items(params),
     select: (data) => normalizeItems(data.items),
     staleTime: 5 * 60_000, // the catalog barely changes
+  });
+
+export const useServices = (params) =>
+  useQuery({
+    queryKey: keys.services(params),
+    queryFn: () => api.services(params),
+    select: (data) => data.services,
+    staleTime: 5 * 60_000,
   });
 
 export const useLocations = (type) =>
@@ -149,6 +158,13 @@ export const useConsumption = (params) =>
     select: (data) => ({ ...data, consumption: normalizeConsumption(data.consumption) }),
   });
 
+export const useServicesReport = (params) =>
+  useQuery({
+    queryKey: keys.reportServices(params),
+    queryFn: () => api.reportServices(params),
+    select: normalizeServicesReport,
+  });
+
 export const useTechActivity = (params) =>
   useQuery({
     queryKey: keys.reportTechActivity(params),
@@ -200,6 +216,33 @@ export function useUpdateItem() {
   return useMutation({
     mutationFn: ({ id, ...body }) => api.updateItem(id, body),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['items'] }),
+  });
+}
+
+export function useCreateService() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body) => api.createService(body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['services'] }),
+  });
+}
+
+export function useUpdateService() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...body }) => api.updateService(id, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['services'] }),
+  });
+}
+
+// Recorded labour rides on the premises views, so those are what go stale —
+// not stock, which a service never touches.
+export function useSetInstallationServices(premisesId) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ installationId, services }) =>
+      api.setInstallationServices(installationId, services),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['premises', premisesId] }),
   });
 }
 

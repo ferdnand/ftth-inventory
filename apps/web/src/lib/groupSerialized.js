@@ -63,6 +63,9 @@ export function toTimelineEvents(timeline) {
       item: row.item_name,
       model: row.model,
       by: row.installed_by_name,
+      // Labour belongs to the visit that installed the unit, so it rides on the
+      // 'installed' event only — a removal undoes hardware, not work done.
+      services: row.services ?? [],
       installationId: row.id,
     });
 

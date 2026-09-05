@@ -9,6 +9,7 @@ export const keys = {
   me: ['me'],
 
   items: (params) => ['items', params ?? {}],
+  services: (params) => ['services', params ?? {}],
   locations: (type) => ['locations', type ?? 'all'],
   users: (params) => ['users', params ?? {}],
 
@@ -35,6 +36,7 @@ export const keys = {
   reportConsumption: (params) => ['reports', 'consumption', params ?? {}],
   reportTechActivity: (params) => ['reports', 'tech-activity', params ?? {}],
   reportInstallationTrends: (params) => ['reports', 'installation-trends', params ?? {}],
+  reportServices: (params) => ['reports', 'services', params ?? {}],
   reportStockByLocation: ['reports', 'stock-by-location'],
 };
 

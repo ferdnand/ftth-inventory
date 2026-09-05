@@ -9,6 +9,7 @@ const {
   optionalString,
   optionalNumber,
 } = require('../lib/validate');
+const { serviceLinesByInstallation } = require('../lib/installationServices');
 
 // GET /api/premises/search?q=Ngong
 //
@@ -101,7 +102,12 @@ router.get(
        WHERE inst.customer_premises_id = $1 AND inst.removed_at IS NULL`,
       [id]
     );
-    res.json({ current: result.rows[0] || null });
+    const current = result.rows[0] || null;
+    if (current) {
+      const grouped = await serviceLinesByInstallation(db, [Number(current.installation_id)]);
+      current.services = grouped[Number(current.installation_id)] ?? [];
+    }
+    res.json({ current });
   })
 );
 
@@ -134,6 +140,15 @@ router.get(
        ORDER BY inst.installed_at DESC`,
       [id]
     );
+
+    // One query for the whole timeline's labour, not one per installation.
+    const services = await serviceLinesByInstallation(
+      db,
+      timeline.rows.map((row) => Number(row.id))
+    );
+    for (const row of timeline.rows) {
+      row.services = services[Number(row.id)] ?? [];
+    }
 
     // One row per installation, so the first router is not a "replacement".
     const totalRouters = timeline.rows.length;

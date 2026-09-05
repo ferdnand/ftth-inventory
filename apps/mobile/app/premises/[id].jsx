@@ -17,6 +17,7 @@ import {
   styles,
 } from '../../src/components/ui';
 import { toTimelineEvents } from '../../src/lib/groupSerialized';
+import { formatServiceLine } from '../../src/lib/format';
 import { formatDate, formatDateTime, formatPremisesCode } from '../../src/lib/format';
 import { REMOVAL_REASON_LABELS } from '../../src/lib/constants';
 import { colors, fonts, radius } from '../../src/theme';
@@ -93,6 +94,11 @@ export default function PremisesDetailScreen() {
             <Text style={[styles.serialStatus, { marginTop: 4 }]}>
               Installed {formatDate(current.data.installed_at)} by {current.data.installed_by_name}
             </Text>
+            {current.data.services?.length ? (
+              <Text style={[styles.serialStatus, { marginTop: 4 }]}>
+                Work: {current.data.services.map(formatServiceLine).join(' · ')}
+              </Text>
+            ) : null}
           </View>
           <Badge variant="installed">Active</Badge>
         </Card>
@@ -122,6 +128,11 @@ export default function PremisesDetailScreen() {
                     {event.mac ? ` · ${event.mac}` : ''}
                   </Text>
                   <Text style={styles.tMeta}>{event.by ?? 'unknown'}</Text>
+                  {!removed && event.services?.length ? (
+                    <Text style={styles.tMeta}>
+                      Work: {event.services.map(formatServiceLine).join(' · ')}
+                    </Text>
+                  ) : null}
                   {event.reason ? (
                     <View
                       style={{
@@ -160,9 +171,14 @@ export default function PremisesDetailScreen() {
       {/* One action, chosen by what is actually there — offering both would
         * guarantee one of them 404s or 409s. */}
       {hasActive ? (
-        <PrimaryButton onPress={() => router.push(`/premises/${premisesId}/replace`)}>
-          Replace router
-        </PrimaryButton>
+        <>
+          <PrimaryButton onPress={() => router.push(`/premises/${premisesId}/replace`)}>
+            Replace router
+          </PrimaryButton>
+          <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/work`)}>
+            {current.data.services?.length ? 'Edit recorded work' : 'Record work performed'}
+          </SecondaryButton>
+        </>
       ) : (
         <PrimaryButton onPress={() => router.push(`/premises/${premisesId}/install`)}>
           Install router

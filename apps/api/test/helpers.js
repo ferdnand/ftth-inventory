@@ -43,6 +43,7 @@ const { up } = require('../db/migrate');
 // Order matters: children before parents.
 const TABLES = [
   'transactions',
+  'installation_services',
   'installations',
   'restock_request_lines',
   'restock_requests',
@@ -51,6 +52,7 @@ const TABLES = [
   'stock_levels',
   'customer_premises',
   'items',
+  'services',
   'locations',
   'users',
 ];
@@ -112,6 +114,16 @@ async function createItem({
      VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
     [name, category, trackingType, unitOfMeasure, reorderThreshold]
+  );
+  return result.rows[0];
+}
+
+async function createService({ name, unitOfMeasure = 'job', isActive = true }) {
+  const result = await db.query(
+    `INSERT INTO services (name, unit_of_measure, is_active)
+     VALUES ($1, $2, $3)
+     RETURNING *`,
+    [name, unitOfMeasure, isActive]
   );
   return result.rows[0];
 }
@@ -239,6 +251,7 @@ const api = {
   get: (path, opts) => request('GET', path, opts),
   post: (path, opts) => request('POST', path, opts),
   patch: (path, opts) => request('PATCH', path, opts),
+  put: (path, opts) => request('PUT', path, opts),
 };
 
 const uniqueKey = () => crypto.randomUUID();
@@ -258,6 +271,7 @@ module.exports = {
   createLocation,
   createItem,
   createInstance,
+  createService,
   createPremises,
   setStock,
   getStock,

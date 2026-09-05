@@ -6,12 +6,18 @@ import {
   useCurrentInstallation,
   useInstall,
   usePremisesHistory,
+  useServices,
   useStock,
   useWorkOrders,
 } from '../../../src/api/queries';
 import { newIdempotencyKey } from '../../../src/api/client';
 import { Screen } from '../../../src/components/Screen';
 import { SerialPicker } from '../../../src/components/SerialPicker';
+import {
+  ServicePicker,
+  serviceLinesReady,
+  toServiceLines,
+} from '../../../src/components/ServicePicker';
 import {
   Banner,
   EmptyState,
@@ -35,10 +41,13 @@ export default function InstallAtPremisesScreen() {
   const current = useCurrentInstallation(premisesId);
   const stock = useStock(user?.assigned_location_id);
   const jobs = useWorkOrders({ assigned_tech_id: 'me', customer_premises_id: premisesId });
+  const services = useServices();
   const install = useInstall();
 
   const [unit, setUnit] = useState(null);
   const [workOrderId, setWorkOrderId] = useState(null);
+  // { [serviceId]: { quantity, notes } } — see ServicePicker.
+  const [work, setWork] = useState({});
   const [error, setError] = useState(null);
   // One key per submit attempt, held across retries so a flaky connection
   // cannot double-install.
@@ -56,6 +65,7 @@ export default function InstallAtPremisesScreen() {
         customer_premises_id: premisesId,
         item_instance_id: unit.id,
         work_order_id: workOrderId ?? undefined,
+        services: toServiceLines(work),
         idempotency_key: idempotencyKey,
       });
       router.replace(`/premises/${premisesId}`);
@@ -125,6 +135,9 @@ export default function InstallAtPremisesScreen() {
             onSelect={setUnit}
           />
 
+          <SectionLabel>Work performed (optional)</SectionLabel>
+          <ServicePicker services={services.data ?? []} value={work} onChange={setWork} />
+
           {unit ? (
             <>
               <SectionLabel>Confirm</SectionLabel>
@@ -137,7 +150,7 @@ export default function InstallAtPremisesScreen() {
 
           <PrimaryButton
             onPress={onSubmit}
-            disabled={!unit}
+            disabled={!unit || !serviceLinesReady(work, services.data)}
             busy={install.isPending}
           >
             Confirm install

@@ -68,6 +68,9 @@ export function toTimelineEvents(timeline) {
       mac: row.mac_address,
       item: row.item_name,
       by: row.installed_by_name,
+      // Labour belongs to the visit that installed the unit — a removal undoes
+      // hardware, not the work that was done.
+      services: row.services ?? [],
     });
 
     if (row.removed_at) {

@@ -64,3 +64,15 @@ export const normalizeLowStock = (rows) =>
 
 export const normalizeConsumption = (rows) =>
   rows.map((r) => ({ ...r, quantity: num(r.quantity) }));
+
+// Grouped by tech, quantity is deliberately NULL (jobs and metres do not add
+// up), so num() keeps it null rather than coercing it to 0 and implying none
+// was done.
+export const normalizeServicesReport = (payload) => ({
+  ...payload,
+  services: payload.services.map((r) => ({ ...r, quantity: num(r.quantity) })),
+  totals: {
+    ...payload.totals,
+    by_unit: payload.totals.by_unit.map((r) => ({ ...r, quantity: num(r.quantity) })),
+  },
+});

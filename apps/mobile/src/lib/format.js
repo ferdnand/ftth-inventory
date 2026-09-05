@@ -52,3 +52,10 @@ export const formatQuantity = (value) => {
   if (n === null) return '—';
   return Number.isInteger(n) ? String(n) : String(Number(n.toFixed(2)));
 };
+
+// "40 m" for measured work, just the name for flat-rate work — a bare "1" next
+// to Splicing is noise, because a splice is always one splice.
+export const formatServiceLine = (line) =>
+  line.unit_of_measure === 'job'
+    ? line.name
+    : `${line.name} — ${formatQuantity(line.quantity)} ${line.unit_of_measure === 'meter' ? 'm' : line.unit_of_measure}`;

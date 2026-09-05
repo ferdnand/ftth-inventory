@@ -5,6 +5,7 @@ import { ProtectedRoute, RoleRoute } from './auth/ProtectedRoute';
 import { LoginPage } from './pages/LoginPage';
 import { OverviewPage } from './pages/OverviewPage';
 import { ItemsPage } from './pages/ItemsPage';
+import { ServicesPage } from './pages/ServicesPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { LocationStockPage } from './pages/LocationStockPage';
 import { ReceiveStockPage } from './pages/ReceiveStockPage';
@@ -33,6 +34,10 @@ const TechActivityReportPage = lazyPage(
 const InstallationTrendsReportPage = lazyPage(
   () => import('./pages/reports/InstallationTrendsReportPage'),
   'InstallationTrendsReportPage'
+);
+const ServicesReportPage = lazyPage(
+  () => import('./pages/reports/ServicesReportPage'),
+  'ServicesReportPage'
 );
 
 // These modules use named exports; React.lazy wants a default.
@@ -66,6 +71,7 @@ export const router = createBrowserRouter([
           { index: true, element: <OverviewPage /> },
 
           { path: 'items', element: <ItemsPage /> },
+          { path: 'services', element: <ServicesPage /> },
           { path: 'locations', element: <LocationsPage /> },
           { path: 'locations/:id/stock', element: <LocationStockPage /> },
 
@@ -87,6 +93,7 @@ export const router = createBrowserRouter([
               { path: 'reports/consumption', element: <ConsumptionReportPage /> },
               { path: 'reports/tech-activity', element: <TechActivityReportPage /> },
               { path: 'reports/installations', element: <InstallationTrendsReportPage /> },
+              { path: 'reports/services', element: <ServicesReportPage /> },
             ],
           },
           {

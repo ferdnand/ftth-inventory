@@ -184,6 +184,98 @@ router.get(
   })
 );
 
+// GET /api/reports/services?from&to&group_by=service|tech
+//
+// Labour performed, which is deliberately absent from /consumption: a splice is
+// not stock leaving the business, and folding the two together would make
+// "consumed" mean two different things in one number.
+//
+// The window is on installations.installed_at — the day the work was DONE, not
+// installation_services.created_at, which is only when someone typed it in. A
+// tech recording Friday's splice on Monday belongs in Friday's figures.
+router.get(
+  '/services',
+  asyncHandler(async (req, res) => {
+    const groupBy = req.query.group_by
+      ? oneOf(req.query.group_by, ['service', 'tech'], 'group_by')
+      : 'service';
+    const from = optionalDate(req.query.from, 'from');
+    const to = optionalDate(req.query.to, 'to');
+
+    const window = `
+      AND ($1::date IS NULL OR inst.installed_at >= $1::date)
+      AND ($2::date IS NULL OR inst.installed_at < $2::date + 1)
+    `;
+
+    // Grouped by service, quantity is meaningful: every row is one unit of
+    // measure. Grouped by tech it would add 40 metres to 3 splices, so that
+    // shape counts lines and visits instead and reports no quantity at all.
+    const GROUPINGS = {
+      service: {
+        select: `s.id AS service_id, s.name AS label, s.unit_of_measure,
+                 SUM(isv.quantity) AS quantity,
+                 COUNT(*)::int AS services_performed,
+                 COUNT(DISTINCT inst.id)::int AS visits`,
+        group: 's.id, s.name, s.unit_of_measure',
+        order: 'quantity DESC',
+      },
+      tech: {
+        select: `u.id AS user_id, u.name AS label, u.role,
+                 NULL::numeric AS quantity,
+                 COUNT(*)::int AS services_performed,
+                 COUNT(DISTINCT inst.id)::int AS visits`,
+        group: 'u.id, u.name, u.role',
+        order: 'services_performed DESC, u.name',
+      },
+    };
+    const grouping = GROUPINGS[groupBy];
+
+    const rows = await db.query(
+      `SELECT ${grouping.select}
+       FROM installation_services isv
+       JOIN services s ON s.id = isv.service_id
+       JOIN installations inst ON inst.id = isv.installation_id
+       JOIN users u ON u.id = inst.installed_by
+       WHERE TRUE ${window}
+       GROUP BY ${grouping.group}
+       ORDER BY ${grouping.order}`,
+      [from, to]
+    );
+
+    // Totals stay split by unit for the same reason: one "total quantity" over
+    // jobs and metres would be a number with no meaning. The tiles read
+    // "37 jobs · 412 m", not "449".
+    const byUnit = await db.query(
+      `SELECT s.unit_of_measure, SUM(isv.quantity) AS quantity
+       FROM installation_services isv
+       JOIN services s ON s.id = isv.service_id
+       JOIN installations inst ON inst.id = isv.installation_id
+       WHERE TRUE ${window}
+       GROUP BY s.unit_of_measure
+       ORDER BY s.unit_of_measure`,
+      [from, to]
+    );
+
+    const totals = await db.query(
+      `SELECT COUNT(*)::int AS services_performed,
+              COUNT(DISTINCT isv.installation_id)::int AS visits,
+              COUNT(DISTINCT isv.service_id)::int AS distinct_services
+       FROM installation_services isv
+       JOIN installations inst ON inst.id = isv.installation_id
+       WHERE TRUE ${window}`,
+      [from, to]
+    );
+
+    res.json({
+      group_by: groupBy,
+      from,
+      to,
+      services: rows.rows,
+      totals: { ...totals.rows[0], by_unit: byUnit.rows },
+    });
+  })
+);
+
 // GET /api/reports/tech-activity?from&to
 //
 // Counts installs and removals from the `installations` table rather than the

@@ -6,12 +6,18 @@ import {
   useCurrentInstallation,
   usePremisesHistory,
   useReplaceRouter,
+  useServices,
   useStock,
   useWorkOrders,
 } from '../../../src/api/queries';
 import { newIdempotencyKey } from '../../../src/api/client';
 import { Screen } from '../../../src/components/Screen';
 import { SerialPicker } from '../../../src/components/SerialPicker';
+import {
+  ServicePicker,
+  serviceLinesReady,
+  toServiceLines,
+} from '../../../src/components/ServicePicker';
 import { ReadOnlyField } from '../../../src/components/fields';
 import {
   Badge,
@@ -38,10 +44,12 @@ export default function ReplaceRouterScreen() {
   const history = usePremisesHistory(premisesId);
   const stock = useStock(user?.assigned_location_id);
   const jobs = useWorkOrders({ assigned_tech_id: 'me', customer_premises_id: premisesId });
+  const services = useServices();
   const replace = useReplaceRouter();
 
   const [unit, setUnit] = useState(null);
   const [reason, setReason] = useState(null);
+  const [work, setWork] = useState({});
   const [workOrderId, setWorkOrderId] = useState(null);
   const [error, setError] = useState(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
@@ -74,6 +82,9 @@ export default function ReplaceRouterScreen() {
         new_item_instance_id: unit.id,
         removal_reason: reason,
         work_order_id: workOrderId ?? undefined,
+        // Recorded against the NEW installation: the work was done today, and
+        // the visit being closed out had its own.
+        services: toServiceLines(work),
         idempotency_key: idempotencyKey,
       });
       router.replace(`/premises/${premisesId}`);
@@ -82,7 +93,7 @@ export default function ReplaceRouterScreen() {
     }
   }
 
-  const ready = Boolean(unit && reason);
+  const ready = Boolean(unit && reason) && serviceLinesReady(work, services.data);
 
   return (
     <Screen eyebrow={formatPremisesCode(premisesId)} title="Replace router" sub={address}>
@@ -163,6 +174,9 @@ export default function ReplaceRouterScreen() {
           The removed unit will be marked returned and stay in your van until you run it back.
         </Text>
       ) : null}
+
+      <SectionLabel>Work performed (optional)</SectionLabel>
+      <ServicePicker services={services.data ?? []} value={work} onChange={setWork} />
 
       <PrimaryButton onPress={onSubmit} disabled={!ready} busy={replace.isPending}>
         Confirm replacement
