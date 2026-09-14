@@ -90,9 +90,13 @@ export const api = {
 
   stock: (locationId) => request('/stock', { params: { location_id: locationId } }),
 
-  searchPremises: (q) => request('/premises/search', { params: { q } }),
+  searchPremises: (q, siteId) =>
+    request('/premises/search', { params: { q, site_id: siteId } }),
+  // Browsing a site, for the compounds that have no address to type.
+  premisesAtSite: (siteId) => request('/premises', { params: { site_id: siteId } }),
   premises: (id) => request(`/premises/${id}`),
   createPremises: (body) => request('/premises', { method: 'POST', body }),
+  updatePremises: (id, body) => request(`/premises/${id}`, { method: 'PATCH', body }),
   currentInstallation: (id) => request(`/premises/${id}/current`),
   premisesHistory: (id) => request(`/premises/${id}/history`),
 
@@ -111,8 +115,22 @@ export const api = {
     request(`/installations/${installationId}/services`, { method: 'PUT', body: { services } }),
   locations: (type) => request('/locations', { params: { type } }),
 
+  // Jobs. The API path is /work-orders because that is what the manager calls
+  // one; the app says "job" because that is what the tech calls it.
   workOrders: (params) => request('/work-orders', { params }),
+  workOrder: (id) => request(`/work-orders/${id}`),
+  createWorkOrder: (body) => request('/work-orders', { method: 'POST', body }),
   updateWorkOrder: (id, body) => request(`/work-orders/${id}`, { method: 'PATCH', body }),
+
+  // All three take the COMPLETE list and replace what is there, so a retry on
+  // a dying connection cannot double-count. Materials move van stock by the
+  // difference, which is why re-sending the same list moves nothing.
+  setJobMaterials: (id, materials) =>
+    request(`/work-orders/${id}/materials`, { method: 'PUT', body: { materials } }),
+  setJobServices: (id, services) =>
+    request(`/work-orders/${id}/services`, { method: 'PUT', body: { services } }),
+  setJobExpenses: (id, expenses) =>
+    request(`/work-orders/${id}/expenses`, { method: 'PUT', body: { expenses } }),
 
   restockRequests: (params) => request('/restock-requests', { params }),
   createRestockRequest: (body) => request('/restock-requests', { method: 'POST', body }),

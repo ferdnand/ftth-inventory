@@ -9,7 +9,12 @@ import {
 } from '../hooks/useData';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
-import { NumberInput, TextInput } from '../components/fields';
+import {
+  PremisesFields,
+  premisesFormBody,
+  premisesFormFrom,
+  premisesFormLocatable,
+} from '../components/PremisesFields';
 import { useToast } from '../components/Toast';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
@@ -25,30 +30,23 @@ function PremisesFormDialog({ premises, onClose }) {
   const update = useUpdatePremises();
   const { notify, notifyError } = useToast();
 
-  const [form, setForm] = useState({
-    address: premises.address ?? '',
-    customer_account_id: premises.customer_account_id ?? '',
-    gps_lat: premises.gps_lat ?? '',
-    gps_lng: premises.gps_lng ?? '',
-  });
+  const [form, setForm] = useState(() => premisesFormFrom(premises));
   const [errors, setErrors] = useState({});
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
 
   async function onSubmit(event) {
     event.preventDefault();
-    if (!form.address.trim()) {
-      setErrors({ address: 'Required' });
+    // The old rule was "an address is required". It is not: what a premises
+    // needs is to be findable again, and out here that is usually a pin and a
+    // landmark. Same rule as premises_must_be_locatable in the database.
+    if (!premisesFormLocatable(form)) {
+      setErrors({ address: 'Give this, or a landmark, or a GPS pin' });
       return;
     }
     try {
-      // null clears a field; '' would be read as "no value supplied".
-      await update.mutateAsync({
-        id: premises.id,
-        address: form.address.trim(),
-        customer_account_id: form.customer_account_id.trim() || null,
-        gps_lat: form.gps_lat === '' ? null : Number(form.gps_lat),
-        gps_lng: form.gps_lng === '' ? null : Number(form.gps_lng),
-      });
+      // nulls: true — on an edit, an emptied box has to be sent as null to
+      // actually clear it. A missing key means "leave this alone".
+      await update.mutateAsync({ id: premises.id, ...premisesFormBody(form, { nulls: true }) });
       notify('Premises updated');
       onClose();
     } catch (err) {
@@ -77,34 +75,7 @@ function PremisesFormDialog({ premises, onClose }) {
       }
     >
       <form id="premises-form" onSubmit={onSubmit}>
-        <TextInput
-          id="address"
-          label="Address"
-          value={form.address}
-          onChange={set('address')}
-          error={errors.address}
-        />
-        <TextInput
-          id="customer_account_id"
-          label="Account"
-          value={form.customer_account_id}
-          onChange={set('customer_account_id')}
-          hint="The customer reference this address is billed under. Optional."
-        />
-        <NumberInput
-          id="gps_lat"
-          label="Latitude"
-          value={form.gps_lat}
-          onChange={set('gps_lat')}
-          step="any"
-        />
-        <NumberInput
-          id="gps_lng"
-          label="Longitude"
-          value={form.gps_lng}
-          onChange={set('gps_lng')}
-          step="any"
-        />
+        <PremisesFields form={form} set={set} errors={errors} />
       </form>
     </Modal>
   );
@@ -160,7 +131,7 @@ export function PremisesDetailPage() {
     <div className="page">
       <PageHeader
         eyebrow={formatPremisesCode(premises.id)}
-        title={premises.address}
+        title={premises.label}
         sub={premises.customer_account_id ? `Account ${premises.customer_account_id}` : undefined}
         actions={
           <>
@@ -196,6 +167,38 @@ export function PremisesDetailPage() {
           <div className="num">{openJobs.length}</div>
           <div className="lbl">Open jobs</div>
         </div>
+      </div>
+
+      {/* An address used to be the whole story. Now the pin and the phone
+        * number are the parts that get anyone here, so they come first. */}
+      <div className="section-label">The place</div>
+      <div className="card">
+        <div className="item-meta">
+          {[label(premises.premises_type), premises.village, premises.site_name]
+            .filter(Boolean)
+            .join(' · ') || 'No site or village recorded'}
+        </div>
+        {premises.customer_name ? (
+          <div className="item-name">{premises.customer_name}</div>
+        ) : null}
+        {premises.customer_phone ? (
+          <div className="item-meta">{premises.customer_phone}</div>
+        ) : null}
+        {premises.landmark ? <div className="item-meta">{premises.landmark}</div> : null}
+        <div className="item-meta">
+          {premises.gps_lat === null || premises.gps_lat === undefined
+            ? 'No GPS pin — a tech can drop one from the field app'
+            : `Pin ${Number(premises.gps_lat).toFixed(5)}, ${Number(premises.gps_lng).toFixed(5)}` +
+              (premises.gps_accuracy_m ? ` (±${premises.gps_accuracy_m} m)` : '')}
+        </div>
+        {premises.created_by_name ? (
+          <div className="item-meta">Captured by {premises.created_by_name}</div>
+        ) : null}
+        {premises.notes ? (
+          <div className="item-meta" style={{ whiteSpace: 'pre-wrap' }}>
+            {premises.notes}
+          </div>
+        ) : null}
       </div>
 
       <div className="section-label">Currently installed</div>
@@ -291,12 +294,13 @@ export function PremisesDetailPage() {
         </div>
       )}
 
-      <div className="section-label">Work orders at this address</div>
+      <div className="section-label">Jobs at this premises</div>
       {workOrders.isPending ? (
         <LoadingRows rows={2} />
       ) : (workOrders.data ?? []).length === 0 ? (
         <EmptyState title="No jobs recorded here">
-          Work orders are optional — installs do not need one.
+          Nobody has visited yet. A tech opens a job when they arrive, and every install belongs
+          to one.
         </EmptyState>
       ) : (
         <div>

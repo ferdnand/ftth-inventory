@@ -1,114 +1,185 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler, badRequest, notFound } = require('../lib/errors');
+const { asyncHandler, badRequest, forbidden, notFound } = require('../lib/errors');
+const { intId, optionalIntId, limit } = require('../lib/validate');
+const { serviceLinesByInstallation } = require('../lib/jobLines');
 const {
-  requireFields,
-  intId,
-  nonEmptyString,
-  optionalString,
-  optionalNumber,
-} = require('../lib/validate');
-const { requireRole } = require('../middleware/auth');
-const { serviceLinesByInstallation } = require('../lib/installationServices');
+  FIELDS,
+  PREMISES_SELECT,
+  parsePremisesFields,
+  assertGpsCoherent,
+  assertLocatable,
+  assertIsSite,
+  insertPremises,
+  shapePremises,
+} = require('../lib/premises');
 
-// GET /api/premises/search?q=Ngong
+// GET /api/premises/search?q=Nasianda&site_id=3&limit=20
 //
 // Under two characters this returns an empty result list with a 200, not an
 // error — the clients render that as a "type at least 2 characters" hint. Both
 // clients depend on this behaviour, so don't turn it into a 400.
+//
+// The searchable text is the generated `search_text` column from
+// 011_sites_and_premises_capture.sql: address, customer name, phone, village,
+// landmark and account id. A tech looking for a house has whichever fragment
+// the customer gave them on the phone, and it is rarely the address.
 router.get(
   '/search',
   asyncHandler(async (req, res) => {
     const q = (req.query.q || '').trim();
+    const siteId = optionalIntId(req.query.site_id, 'site_id');
+    const max = limit(req.query.limit, 20, 100);
+
     if (q.length < 2) {
       return res.json({ results: [], hint: 'Type at least 2 characters' });
     }
 
-    // Full-text on the address (which is what the GIN index in 001_init.sql is
-    // for) OR'd with a prefix match on the account id, so both "Ngong" and
-    // "KE-77291" find the same row. websearch_to_tsquery tolerates whatever a
-    // person types without throwing on punctuation.
+    const params = [q, `%${q}%`, max];
+    let siteClause = '';
+    if (siteId) {
+      params.push(siteId);
+      siteClause = `AND cp.site_id = $${params.length}`;
+    }
+
+    // Full text (which is what the GIN index is for) OR'd with a substring
+    // match, so both "Nasianda" and a half-typed phone number find the row.
+    // websearch_to_tsquery tolerates whatever a person types without throwing
+    // on punctuation.
     const result = await db.query(
-      `SELECT id, address, customer_account_id
-       FROM customer_premises
-       WHERE to_tsvector('english', address) @@ websearch_to_tsquery('english', $1)
-          OR address ILIKE $2
-          OR customer_account_id ILIKE $2
-       ORDER BY address
-       LIMIT 20`,
-      [q, `%${q}%`]
+      `${PREMISES_SELECT}
+       WHERE (to_tsvector('english', cp.search_text) @@ websearch_to_tsquery('english', $1)
+              OR cp.search_text ILIKE $2)
+         ${siteClause}
+       ORDER BY cp.address NULLS LAST, cp.id
+       LIMIT $3`,
+      params
     );
-    res.json({ results: result.rows });
+    res.json({ results: result.rows.map(shapePremises) });
+  })
+);
+
+// GET /api/premises?site_id=&limit=
+//
+// Browsing rather than searching. The field app needs this because the premises
+// a tech wants may have no address to type: a compound recorded as a GPS pin
+// and a landmark is invisible to a search box, and "the ones near me" is not a
+// query this API can answer. A site's list is short enough to scroll.
+router.get(
+  '/',
+  asyncHandler(async (req, res) => {
+    const siteId = optionalIntId(req.query.site_id, 'site_id');
+    const max = limit(req.query.limit, 100, 500);
+
+    const params = [max];
+    let siteClause = '';
+    if (siteId) {
+      params.push(siteId);
+      siteClause = `WHERE cp.site_id = $${params.length}`;
+    }
+
+    const result = await db.query(
+      `${PREMISES_SELECT} ${siteClause} ORDER BY cp.created_at DESC LIMIT $1`,
+      params
+    );
+    res.json({ premises: result.rows.map(shapePremises) });
   })
 );
 
 // POST /api/premises
-// body: { address, customer_account_id?, gps_lat?, gps_lng? }
+// body: { address?, landmark?, village?, customer_name?, customer_phone?,
+//         customer_account_id?, premises_type?, site_id?,
+//         gps_lat?, gps_lng?, gps_accuracy_m?, gps_captured_at?, notes? }
 //
-// Any authenticated user can add one: a tech standing at a new address needs to
-// be able to create it before they can install anything there.
+// Any authenticated user can add one: a tech standing at a compound nobody has
+// recorded needs to be able to create it before they can do anything there.
+// Every field is optional individually — the rule is that the result has to be
+// findable again. See lib/premises.js.
 router.post(
   '/',
   asyncHandler(async (req, res) => {
-    requireFields(req.body, ['address']);
-    const address = nonEmptyString(req.body.address, 'address', 500);
-    const accountId = optionalString(req.body.customer_account_id, 'customer_account_id', 100);
-    const lat = optionalNumber(req.body.gps_lat, 'gps_lat');
-    const lng = optionalNumber(req.body.gps_lng, 'gps_lng');
-
-    const result = await db.query(
-      `INSERT INTO customer_premises (address, customer_account_id, gps_lat, gps_lng)
-       VALUES ($1, $2, $3, $4)
-       RETURNING *`,
-      [address, accountId, lat, lng]
-    );
-    res.status(201).json({ premises: result.rows[0] });
+    const premises = await insertPremises(db, req.body ?? {}, req.user.id);
+    res.status(201).json({ premises: shapePremises(premises) });
   })
 );
 
 // PATCH /api/premises/:id
-// body: { address?, customer_account_id?, gps_lat?, gps_lng? }
 //
 // Creating a premises is open to any authenticated user because a tech standing
-// at a new address has to be able to; editing one is not. A tech who mistyped
-// an address raises it with the warehouse — the row is already the anchor for
-// an install history, and silently renaming it changes what past work says it
-// was done on.
+// at a new compound has to be able to; editing one is mostly not. A tech who
+// mistyped an address raises it with the warehouse — the row is already the
+// anchor for an install history, and silently renaming it changes what past
+// work says it was done on.
+//
+// The exception is the GPS fix, which any authenticated user may add or
+// improve. A tech who saved a premises indoors on a 200 m fix and walks outside
+// to a 6 m one is correcting the single most useful field on the record, and
+// making them phone the warehouse to do it means it never gets done. Overwriting
+// is allowed because a later fix taken at the compound is a better fix; what
+// cannot be done here is clearing one.
 router.patch(
   '/:id',
-  requireRole('warehouse_staff', 'pm'),
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
 
-    const sets = [];
-    const params = [];
-    const set = (column, value) => {
-      params.push(value);
-      sets.push(`${column} = $${params.length}`);
-    };
+    const existing = await db.query(
+      'SELECT id, address, landmark, gps_lat, gps_lng FROM customer_premises WHERE id = $1',
+      [id]
+    );
+    if (existing.rows.length === 0) throw notFound('Premises not found');
+    const current = existing.rows[0];
 
-    if (req.body.address !== undefined) {
-      set('address', nonEmptyString(req.body.address, 'address', 500));
-    }
-    if (req.body.customer_account_id !== undefined) {
-      set(
-        'customer_account_id',
-        optionalString(req.body.customer_account_id, 'customer_account_id', 100)
+    const GPS_FIELDS = ['gps_lat', 'gps_lng', 'gps_accuracy_m', 'gps_captured_at'];
+    const touched = Object.keys(req.body ?? {}).filter((k) => k in FIELDS);
+    const nonGps = touched.filter((k) => !GPS_FIELDS.includes(k));
+
+    if (nonGps.length > 0 && !['warehouse_staff', 'pm', 'admin'].includes(req.user.role)) {
+      throw forbidden(
+        `Only the warehouse can change ${nonGps.join(', ')} — you can update the GPS fix`
       );
     }
-    if (req.body.gps_lat !== undefined) set('gps_lat', optionalNumber(req.body.gps_lat, 'gps_lat'));
-    if (req.body.gps_lng !== undefined) set('gps_lng', optionalNumber(req.body.gps_lng, 'gps_lng'));
 
-    if (sets.length === 0) throw badRequest('No editable fields were provided');
+    const values = parsePremisesFields(req.body ?? {});
+    if (Object.keys(values).length === 0) {
+      throw badRequest('No editable fields were provided');
+    }
 
+    // A pin cannot be taken away: something was installed against this record
+    // and the fix is how anyone finds it again.
+    if ('gps_lat' in values && values.gps_lat === null && current.gps_lat !== null) {
+      throw badRequest(
+        'A GPS fix cannot be cleared, only replaced with a better one'
+      );
+    }
+
+    const lat = 'gps_lat' in values ? values.gps_lat : current.gps_lat;
+    const lng = 'gps_lng' in values ? values.gps_lng : current.gps_lng;
+    assertGpsCoherent(lat, lng, values.gps_accuracy_m ?? null);
+    assertLocatable({
+      address: 'address' in values ? values.address : current.address,
+      landmark: 'landmark' in values ? values.landmark : current.landmark,
+      gps_lat: lat,
+    });
+    if ('site_id' in values) await assertIsSite(db, values.site_id);
+
+    // A new fix with no time on it was taken now, matching insertPremises.
+    if ('gps_lat' in values && values.gps_lat !== null && !values.gps_captured_at) {
+      values.gps_captured_at = new Date().toISOString();
+    }
+
+    const columns = Object.keys(values);
+    const params = columns.map((c) => values[c]);
+    const sets = columns.map((c, i) => `${c} = $${i + 1}`);
     params.push(id);
-    const result = await db.query(
-      `UPDATE customer_premises SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING *`,
+
+    await db.query(
+      `UPDATE customer_premises SET ${sets.join(', ')} WHERE id = $${params.length}`,
       params
     );
-    if (result.rows.length === 0) throw notFound('Premises not found');
-    res.json({ premises: result.rows[0] });
+
+    const full = await db.query(`${PREMISES_SELECT} WHERE cp.id = $1`, [id]);
+    res.json({ premises: shapePremises(full.rows[0]) });
   })
 );
 
@@ -117,12 +188,9 @@ router.get(
   '/:id',
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
-    const result = await db.query(
-      'SELECT * FROM customer_premises WHERE id = $1',
-      [id]
-    );
+    const result = await db.query(`${PREMISES_SELECT} WHERE cp.id = $1`, [id]);
     if (result.rows.length === 0) throw notFound('Premises not found');
-    res.json({ premises: result.rows[0] });
+    res.json({ premises: shapePremises(result.rows[0]) });
   })
 );
 
@@ -164,10 +232,7 @@ router.get(
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
 
-    const premises = await db.query(
-      'SELECT id, address, customer_account_id FROM customer_premises WHERE id = $1',
-      [id]
-    );
+    const premises = await db.query(`${PREMISES_SELECT} WHERE cp.id = $1`, [id]);
     if (premises.rows.length === 0) throw notFound('Premises not found');
 
     const timeline = await db.query(
@@ -201,7 +266,7 @@ router.get(
     const replacementCount = Math.max(totalRouters - 1, 0);
 
     res.json({
-      premises: premises.rows[0],
+      premises: shapePremises(premises.rows[0]),
       total_routers: totalRouters,
       replacement_count: replacementCount,
       timeline: timeline.rows,

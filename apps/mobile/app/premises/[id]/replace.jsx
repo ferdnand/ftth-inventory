@@ -24,6 +24,7 @@ import {
   Banner,
   Card,
   DangerButton,
+  EmptyState,
   Loading,
   Pill,
   PrimaryButton,
@@ -35,8 +36,11 @@ import { REMOVAL_REASONS, REMOVAL_REASON_LABELS, label } from '../../../src/lib/
 
 // Mockup screen 02, lower half.
 export default function ReplaceRouterScreen() {
-  const { id } = useLocalSearchParams();
+  // `job` arrives when this screen was opened from a job already running, so
+  // the swap lands on that job rather than opening a second one for one visit.
+  const { id, job } = useLocalSearchParams();
   const premisesId = Number(id);
+  const fromJobId = job ? Number(job) : null;
   const router = useRouter();
   const { user } = useAuth();
 
@@ -50,13 +54,13 @@ export default function ReplaceRouterScreen() {
   const [unit, setUnit] = useState(null);
   const [reason, setReason] = useState(null);
   const [work, setWork] = useState({});
-  const [workOrderId, setWorkOrderId] = useState(null);
+  const [workOrderId, setWorkOrderId] = useState(fromJobId);
   const [error, setError] = useState(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
 
   if (current.isPending || stock.isPending) return <Loading label="Loading" />;
 
-  const address = history.data?.premises?.address ?? `Premises ${premisesId}`;
+  const address = history.data?.premises?.label ?? `Premises ${premisesId}`;
 
   // The API 404s here when nothing is installed. Rather than showing that as an
   // error, route to the action that does apply.
@@ -87,7 +91,9 @@ export default function ReplaceRouterScreen() {
         services: toServiceLines(work),
         idempotency_key: idempotencyKey,
       });
-      router.replace(`/premises/${premisesId}`);
+      // Back to the job, which is where the materials and the costs go.
+      const landing = fromJobId ?? workOrderId;
+      router.replace(landing ? `/jobs/${landing}` : `/premises/${premisesId}`);
     } catch (err) {
       setError(err);
     }
@@ -99,7 +105,14 @@ export default function ReplaceRouterScreen() {
     <Screen eyebrow={formatPremisesCode(premisesId)} title="Replace router" sub={address}>
       {error ? <Banner>{error.message}</Banner> : null}
 
-      {jobs.data?.length > 0 ? (
+      {fromJobId ? (
+        <>
+          <SectionLabel>Job</SectionLabel>
+          <EmptyState title={`Job #${fromJobId}`}>
+            This swap will be recorded against the job you came from.
+          </EmptyState>
+        </>
+      ) : jobs.data?.length > 0 ? (
         <>
           <SectionLabel>Link to a job (optional)</SectionLabel>
           <View style={styles.pillRow}>

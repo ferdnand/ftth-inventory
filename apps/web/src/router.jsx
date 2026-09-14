@@ -35,6 +35,10 @@ const InstallationTrendsReportPage = lazyPage(
   () => import('./pages/reports/InstallationTrendsReportPage'),
   'InstallationTrendsReportPage'
 );
+const JobCostsReportPage = lazyPage(
+  () => import('./pages/reports/JobCostsReportPage'),
+  'JobCostsReportPage'
+);
 const ServicesReportPage = lazyPage(
   () => import('./pages/reports/ServicesReportPage'),
   'ServicesReportPage'
@@ -94,6 +98,7 @@ export const router = createBrowserRouter([
               { path: 'reports/tech-activity', element: <TechActivityReportPage /> },
               { path: 'reports/installations', element: <InstallationTrendsReportPage /> },
               { path: 'reports/services', element: <ServicesReportPage /> },
+              { path: 'reports/job-costs', element: <JobCostsReportPage /> },
             ],
           },
           {

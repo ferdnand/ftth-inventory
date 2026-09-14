@@ -1,7 +1,11 @@
 import { useMemo } from 'react';
 import { RefreshControl, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCurrentInstallation, usePremisesHistory } from '../../src/api/queries';
+import {
+  useCurrentInstallation,
+  usePremisesHistory,
+  useWorkOrders,
+} from '../../src/api/queries';
 import { Screen } from '../../src/components/Screen';
 import {
   Badge,
@@ -19,7 +23,7 @@ import {
 import { toTimelineEvents } from '../../src/lib/groupSerialized';
 import { formatServiceLine } from '../../src/lib/format';
 import { formatDate, formatDateTime, formatPremisesCode } from '../../src/lib/format';
-import { REMOVAL_REASON_LABELS } from '../../src/lib/constants';
+import { REMOVAL_REASON_LABELS, label } from '../../src/lib/constants';
 import { colors, fonts, radius } from '../../src/theme';
 
 // Mockup screen 03.
@@ -30,6 +34,13 @@ export default function PremisesDetailScreen() {
 
   const history = usePremisesHistory(premisesId);
   const current = useCurrentInstallation(premisesId);
+  // A job already open here is what the tech should be adding to, rather than
+  // starting a second one for the same visit.
+  const openJobs = useWorkOrders({
+    assigned_tech_id: 'me',
+    customer_premises_id: premisesId,
+    open: 'true',
+  });
 
   const events = useMemo(() => toTimelineEvents(history.data?.timeline ?? []), [history.data]);
 
@@ -52,18 +63,28 @@ export default function PremisesDetailScreen() {
 
   const { premises, total_routers: totalRouters, replacement_count: replacements } = history.data;
   const hasActive = current.data != null;
+  const liveJob = (openJobs.data ?? [])[0] ?? null;
 
   return (
     <Screen
       eyebrow={formatPremisesCode(premises.id)}
-      title={premises.address}
-      sub={premises.customer_account_id ? `Account ${premises.customer_account_id}` : undefined}
+      title={premises.label}
+      sub={
+        [
+          premises.customer_name,
+          premises.site_name,
+          premises.customer_account_id ? `Account ${premises.customer_account_id}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · ') || undefined
+      }
       refreshControl={
         <RefreshControl
           refreshing={history.isRefetching}
           onRefresh={() => {
             history.refetch();
             current.refetch();
+            openJobs.refetch();
           }}
           tintColor={colors.teal}
         />
@@ -75,6 +96,26 @@ export default function PremisesDetailScreen() {
         <Stat value={totalRouters} label="Total routers" />
         <Stat value={replacements} label="Replacements" />
       </StatRow>
+
+      <SectionLabel>The place</SectionLabel>
+      <Card>
+        <Text style={styles.itemMeta}>{label(premises.premises_type)}</Text>
+        {premises.customer_phone ? (
+          <Text style={styles.itemMeta}>{premises.customer_phone}</Text>
+        ) : null}
+        {premises.landmark ? (
+          <Text style={[styles.serialStatus, { marginTop: 4 }]}>{premises.landmark}</Text>
+        ) : null}
+        {premises.village ? (
+          <Text style={styles.serialStatus}>{premises.village}</Text>
+        ) : null}
+        <Text style={[styles.serialStatus, { marginTop: 4 }]}>
+          {premises.gps_lat === null
+            ? 'No GPS pin recorded'
+            : `Pin ${premises.gps_lat.toFixed(5)}, ${premises.gps_lng.toFixed(5)}` +
+              (premises.gps_accuracy_m ? ` (±${premises.gps_accuracy_m} m)` : '')}
+        </Text>
+      </Card>
 
       <SectionLabel>Currently installed</SectionLabel>
       {current.isPending ? (
@@ -168,21 +209,33 @@ export default function PremisesDetailScreen() {
         </Card>
       )}
 
-      {/* One action, chosen by what is actually there — offering both would
-        * guarantee one of them 404s or 409s. */}
+      {/* Work here goes through a job, because that is what holds the
+        * materials and the costs. An open one is resumed rather than
+        * duplicated. The hardware-only routes below stay for the tech who goes
+        * straight at the router — the API opens a job for them. */}
+      {liveJob ? (
+        <PrimaryButton onPress={() => router.push(`/jobs/${liveJob.id}`)}>
+          Open job #{liveJob.id}
+        </PrimaryButton>
+      ) : (
+        <PrimaryButton onPress={() => router.push('/jobs/new')}>Start a job here</PrimaryButton>
+      )}
+
+      {/* One hardware action, chosen by what is actually there — offering both
+        * would guarantee one of them 404s or 409s. */}
       {hasActive ? (
         <>
-          <PrimaryButton onPress={() => router.push(`/premises/${premisesId}/replace`)}>
+          <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/replace`)}>
             Replace router
-          </PrimaryButton>
+          </SecondaryButton>
           <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/work`)}>
             {current.data.services?.length ? 'Edit recorded work' : 'Record work performed'}
           </SecondaryButton>
         </>
       ) : (
-        <PrimaryButton onPress={() => router.push(`/premises/${premisesId}/install`)}>
+        <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/install`)}>
           Install router
-        </PrimaryButton>
+        </SecondaryButton>
       )}
       <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
     </Screen>

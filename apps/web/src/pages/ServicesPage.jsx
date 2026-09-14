@@ -4,9 +4,10 @@ import { useCreateService, useServices, useUpdateService } from '../hooks/useDat
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
-import { Select, TextArea, TextInput } from '../components/fields';
+import { NumberInput, Select, TextArea, TextInput } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
+import { formatMoney } from '../lib/money';
 import { useToast } from '../components/Toast';
 
 // 'job' is flat-rate work; 'meter' is measured on site. The distinction is what
@@ -20,7 +21,12 @@ function ServiceFormDialog({ onClose }) {
   const create = useCreateService();
   const { notify, notifyError } = useToast();
 
-  const [form, setForm] = useState({ name: '', unit_of_measure: 'job', description: '' });
+  const [form, setForm] = useState({
+    name: '',
+    unit_of_measure: 'job',
+    description: '',
+    unit_rate: '',
+  });
   const [errors, setErrors] = useState({});
 
   const set = (key) => (value) => setForm((f) => ({ ...f, [key]: value }));
@@ -36,6 +42,7 @@ function ServiceFormDialog({ onClose }) {
         name: form.name.trim(),
         unit_of_measure: form.unit_of_measure,
         description: form.description.trim() || undefined,
+        unit_rate: form.unit_rate === '' ? undefined : Number(form.unit_rate),
       });
       notify(`${form.name.trim()} added to the services catalog`);
       onClose();
@@ -86,6 +93,22 @@ function ServiceFormDialog({ onClose }) {
               : 'The tech enters the measured amount when recording the work.'
           }
         />
+        {/* The rate a job line copies when the work is recorded.
+            Re-pricing here changes what the NEXT job costs, never what a
+            past one did. */}
+        <NumberInput
+          id="unit_rate"
+          label="Rate (KES)"
+          value={form.unit_rate}
+          onChange={set('unit_rate')}
+          min="0"
+          step="any"
+          hint={
+            form.unit_of_measure === 'job'
+              ? 'Charged once per visit. Blank means unpriced, and job totals say so.'
+              : `Charged per ${form.unit_of_measure}. Blank means unpriced.`
+          }
+        />
         <TextArea
           id="description"
           label="Description"
@@ -128,6 +151,12 @@ export function ServicesPage() {
           <div className="item-meta">{row.description || '—'}</div>
         </>
       ),
+    },
+    {
+      key: 'unit_rate',
+      header: 'Rate',
+      numeric: true,
+      render: (row) => formatMoney(row.unit_rate),
     },
     {
       key: 'unit_of_measure',

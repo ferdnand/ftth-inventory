@@ -18,6 +18,15 @@ export const INSTANCE_STATUSES = [
 export const USER_ROLES = ['warehouse_staff', 'field_tech', 'pm', 'admin'];
 export const REMOVAL_REASONS = ['faulty', 'upgrade', 'customer_cancelled', 'theft', 'other'];
 export const WORK_ORDER_TYPES = ['new_install', 'repair', 'upgrade', 'removal'];
+export const PREMISES_TYPES = ['household', 'business', 'institution', 'multi_dwelling'];
+export const JOB_EXPENSE_CATEGORIES = [
+  'transport',
+  'casual_labour',
+  'permit',
+  'accommodation',
+  'airtime',
+  'other',
+];
 export const WORK_ORDER_STATUSES = ['open', 'in_progress', 'completed', 'cancelled'];
 export const RESTOCK_STATUSES = ['requested', 'approved', 'fulfilled', 'rejected', 'cancelled'];
 
@@ -51,6 +60,18 @@ export const LABELS = {
   other: 'Other',
 
   new_install: 'New install',
+
+  household: 'Household',
+  business: 'Business',
+  institution: 'Institution',
+  multi_dwelling: 'Multi-dwelling',
+
+  transport: 'Transport',
+  casual_labour: 'Casual labour',
+  permit: 'Permit',
+  accommodation: 'Accommodation',
+  airtime: 'Airtime',
+
   repair: 'Repair',
   removal: 'Removal',
 

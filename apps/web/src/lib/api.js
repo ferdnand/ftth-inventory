@@ -90,7 +90,11 @@ export const api = {
   adjustStock: (body) => request('/stock/adjustments', { method: 'POST', body }),
 
   // --- Premises & installations ---
-  searchPremises: (q, signal) => request('/premises/search', { params: { q }, signal }),
+  searchPremises: (q, signal, siteId) =>
+    request('/premises/search', { params: { q, site_id: siteId }, signal }),
+  // Browsing rather than searching: a compound recorded as a GPS pin and a
+  // landmark has nothing anyone would think to type into a search box.
+  premisesList: (params) => request('/premises', { params }),
   premises: (id) => request(`/premises/${id}`),
   createPremises: (body) => request('/premises', { method: 'POST', body }),
   updatePremises: (id, body) => request(`/premises/${id}`, { method: 'PATCH', body }),
@@ -105,11 +109,28 @@ export const api = {
   setInstallationServices: (installationId, services) =>
     request(`/installations/${installationId}/services`, { method: 'PUT', body: { services } }),
 
-  // --- Work orders ---
+  // --- Jobs (work orders) ---
   workOrders: (params) => request('/work-orders', { params }),
   workOrder: (id) => request(`/work-orders/${id}`),
   createWorkOrder: (body) => request('/work-orders', { method: 'POST', body }),
   updateWorkOrder: (id, body) => request(`/work-orders/${id}`, { method: 'PATCH', body }),
+
+  // The three kinds of line a job owns. Each PUT takes the COMPLETE list and
+  // replaces what is there; materials additionally move van stock by the
+  // difference between the old list and the new one.
+  // from_location_id says which stock a NEW line comes out of. A field tech's
+  // own van is assumed; warehouse staff have no van of their own, so they have
+  // to name one. Lines that already exist keep the location they were first
+  // drawn from, whoever edits them.
+  setJobMaterials: (id, materials, fromLocationId) =>
+    request(`/work-orders/${id}/materials`, {
+      method: 'PUT',
+      body: { materials, from_location_id: fromLocationId },
+    }),
+  setJobServices: (id, services) =>
+    request(`/work-orders/${id}/services`, { method: 'PUT', body: { services } }),
+  setJobExpenses: (id, expenses) =>
+    request(`/work-orders/${id}/expenses`, { method: 'PUT', body: { expenses } }),
 
   // --- Restock ---
   restockRequests: (params) => request('/restock-requests', { params }),
@@ -124,5 +145,6 @@ export const api = {
   reportTechActivity: (params) => request('/reports/tech-activity', { params }),
   reportInstallationTrends: (params) => request('/reports/installation-trends', { params }),
   reportServices: (params) => request('/reports/services', { params }),
+  reportJobCosts: (params) => request('/reports/job-costs', { params }),
   reportStockByLocation: () => request('/reports/stock-by-location'),
 };

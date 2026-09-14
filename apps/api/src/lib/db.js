@@ -1,5 +1,16 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
 const env = require('./env');
+
+// A DATE is a calendar day, not an instant, and pg's default parser turns it
+// into a JS Date at midnight UTC. Serialized to JSON in Kenya (UTC+3) that
+// comes back out as the PREVIOUS day at 21:00Z, so a job done on the 10th
+// reaches both clients as the 9th and lands in the wrong day's figures.
+//
+// Handing the string through untouched is what a calendar day actually is.
+// This affects work_orders.performed_on and scheduled_date, and it is set here
+// rather than per query because there is no column for which the shifted
+// behaviour is the right one.
+types.setTypeParser(types.builtins.DATE, (value) => value);
 
 function createPool(connectionString) {
   // Every session runs in one known timezone so date_trunc bucketing in the

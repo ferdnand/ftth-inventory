@@ -16,6 +16,7 @@ import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
 import { formatDate, formatPremisesCode } from '../lib/format';
+import { formatMoney } from '../lib/money';
 import { WORK_ORDER_STATUSES, WORK_ORDER_TYPES, label } from '../lib/constants';
 
 // Debounced combobox over /premises/search. Extracted because both the work
@@ -31,7 +32,7 @@ function PremisesPicker({ value, onChange, error }) {
       <div className="field">
         <label>Premises</label>
         <div className="result-item selected" style={{ cursor: 'default' }}>
-          <div className="addr">{value.address}</div>
+          <div className="addr">{value.label}</div>
           <div className="id">{formatPremisesCode(value.id)}</div>
         </div>
         <button type="button" className="btn-secondary btn-sm" onClick={() => onChange(null)}>
@@ -48,7 +49,7 @@ function PremisesPicker({ value, onChange, error }) {
         id="premises-search"
         value={term}
         onChange={(e) => setTerm(e.target.value)}
-        placeholder="Search by address or account"
+        placeholder="Name, village, landmark, phone or account"
       />
       {error ? <div className="error">{error}</div> : null}
       {tooShort ? (
@@ -56,12 +57,15 @@ function PremisesPicker({ value, onChange, error }) {
       ) : search.isPending ? (
         <div className="hint">Searching…</div>
       ) : search.data.length === 0 ? (
-        <div className="hint">No matches. Add the address under Premises first.</div>
+        <div className="hint">
+          No matches. Add the premises under Premises first, or let the tech capture it in the
+          field app when they get there.
+        </div>
       ) : (
         <div style={{ marginTop: 8 }}>
           {search.data.slice(0, 6).map((row) => (
             <div className="result-item" key={row.id} onClick={() => onChange(row)}>
-              <div className="addr">{row.address}</div>
+              <div className="addr">{row.label}</div>
               <div className="id">{formatPremisesCode(row.id)}</div>
             </div>
           ))}
@@ -157,36 +161,52 @@ export function WorkOrdersPage() {
   const navigate = useNavigate();
   const [status, setStatus] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const workOrders = useWorkOrders(status ? { status } : undefined);
+  // with_costs is opt-in because the roll-up is four aggregates per job; this
+  // list is the one place a manager wants them, so it asks.
+  const workOrders = useWorkOrders({ with_costs: 'true', ...(status ? { status } : {}) });
 
   const columns = [
     { key: 'id', header: 'Job', numeric: true, render: (row) => `#${row.id}` },
     {
-      key: 'address',
+      key: 'label',
       header: 'Premises',
       render: (row) => (
         <>
-          <div className="item-name">{row.address}</div>
-          <div className="item-meta">{formatPremisesCode(row.customer_premises_id)}</div>
+          <div className="item-name">{row.label}</div>
+          <div className="item-meta">
+            {[formatPremisesCode(row.customer_premises_id), row.site_name]
+              .filter(Boolean)
+              .join(' · ')}
+          </div>
         </>
       ),
     },
     { key: 'type', header: 'Type', render: (row) => label(row.type) },
     { key: 'status', header: 'Status', render: (row) => <Badge value={row.status} /> },
     { key: 'assigned_tech_name', header: 'Tech', render: (row) => row.assigned_tech_name ?? '—' },
-    { key: 'scheduled_date', header: 'Scheduled', render: (row) => formatDate(row.scheduled_date) },
+    {
+      key: 'performed_on',
+      header: 'Work done',
+      render: (row) => formatDate(row.performed_on ?? row.scheduled_date),
+    },
+    {
+      key: 'cost',
+      header: 'Cost',
+      numeric: true,
+      render: (row) => formatMoney(row.costs?.total),
+    },
   ];
 
   return (
     <div className="page">
       <PageHeader
         eyebrow="Operations"
-        title="Work orders"
-        sub="Jobs are an optional layer — an install does not need one"
+        title="Jobs"
+        sub="One row per visit. Dispatch one here, or read back what a tech recorded in the field"
         actions={
           hasRole('warehouse_staff', 'pm') ? (
             <button type="button" className="btn-primary" onClick={() => setShowForm(true)}>
-              New work order
+              Dispatch a job
             </button>
           ) : null
         }

@@ -1,6 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
-import { keys, invalidateAfterStockChange, invalidateAfterInstallation } from '../lib/queryKeys';
+import {
+  keys,
+  invalidateAfterStockChange,
+  invalidateAfterInstallation,
+  invalidateAfterJobChange,
+} from '../lib/queryKeys';
 import {
   normalizeStock,
   normalizeStockSummary,
@@ -126,6 +131,24 @@ export const useWorkOrder = (id) =>
     enabled: Boolean(id),
   });
 
+// The premises at one site, for the pickers that cannot rely on a search term:
+// most compounds here have no address anybody would type.
+export const usePremisesList = (params) =>
+  useQuery({
+    queryKey: keys.premisesList(params),
+    queryFn: () => api.premisesList(params),
+    select: (data) => data.premises,
+  });
+
+// The two sites, as `locations` of type 'site'. Reference data, cached hard.
+export const useSites = () =>
+  useQuery({
+    queryKey: keys.locations('site'),
+    queryFn: () => api.locations('site'),
+    select: (data) => data.locations,
+    staleTime: 60 * 60_000,
+  });
+
 // --- Restock --------------------------------------------------------------
 
 export const useRestockRequests = (params) =>
@@ -163,6 +186,12 @@ export const useServicesReport = (params) =>
     queryKey: keys.reportServices(params),
     queryFn: () => api.reportServices(params),
     select: normalizeServicesReport,
+  });
+
+export const useJobCosts = (params) =>
+  useQuery({
+    queryKey: keys.reportJobCosts(params),
+    queryFn: () => api.reportJobCosts(params),
   });
 
 export const useTechActivity = (params) =>
@@ -321,6 +350,40 @@ export function useUpdateWorkOrder() {
       queryClient.invalidateQueries({ queryKey: ['work-orders'] });
       queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
+  });
+}
+
+// The three kinds of line on a job.
+//
+// Materials are the only one that moves stock, so they are the only one that
+// invalidates the stock views. The dashboard can edit all three because it is
+// the back office for a tech who typed a cable length wrong, or a manager
+// pricing up a job after the fact.
+export function useSetJobMaterials() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, materials, fromLocationId }) =>
+      api.setJobMaterials(jobId, materials, fromLocationId),
+    onSuccess: (_data, variables) => {
+      invalidateAfterStockChange(queryClient);
+      invalidateAfterJobChange(queryClient, variables.jobId);
+    },
+  });
+}
+
+export function useSetJobServices() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, services }) => api.setJobServices(jobId, services),
+    onSuccess: (_data, variables) => invalidateAfterJobChange(queryClient, variables.jobId),
+  });
+}
+
+export function useSetJobExpenses() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ jobId, expenses }) => api.setJobExpenses(jobId, expenses),
+    onSuccess: (_data, variables) => invalidateAfterJobChange(queryClient, variables.jobId),
   });
 }
 

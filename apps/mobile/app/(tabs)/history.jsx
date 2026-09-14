@@ -83,8 +83,9 @@ export default function HistoryScreen() {
           ))
         )
       ) : jobs.data.length === 0 ? (
-        <EmptyState title="No jobs assigned to you">
-          Work orders are optional — you can install without one.
+        <EmptyState title="No jobs yet">
+          Start one from the Jobs tab when you get to the next premises. A manager may send you
+          one, but does not have to.
         </EmptyState>
       ) : (
         jobs.data.map((job) => (
@@ -96,7 +97,7 @@ export default function HistoryScreen() {
                 <Text style={styles.itemName}>
                   #{job.id} · {label(job.type)}
                 </Text>
-                <Text style={styles.itemMeta}>{job.address}</Text>
+                <Text style={styles.itemMeta}>{job.label}</Text>
                 <Text style={styles.serialStatus}>
                   {job.scheduled_date ? formatDate(job.scheduled_date) : 'not scheduled'}
                 </Text>

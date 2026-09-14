@@ -47,3 +47,7 @@ Thumbs.db
 
 # Local tool state (keep shared .claude/settings.json tracked)
 .claude/settings.local.json
+
+
+# Generated files
+manenos.txt

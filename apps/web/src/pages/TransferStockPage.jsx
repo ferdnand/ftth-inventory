@@ -144,7 +144,7 @@ function BulkTransfer({ locations, workOrders, initialFrom }) {
         placeholder="Not linked to a job"
         options={workOrders.map((wo) => ({
           value: String(wo.id),
-          label: `#${wo.id} · ${label(wo.type)} · ${wo.address}`,
+          label: `#${wo.id} · ${label(wo.type)} · ${wo.label}`,
         }))}
       />
       <TextInput id="notes" label="Notes" value={notes} onChange={setNotes} />

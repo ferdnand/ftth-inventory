@@ -29,8 +29,29 @@ module.exports = {
       // Expo Go on a LAN talks plain HTTP to the dev API. Android blocks
       // cleartext by default from API 28 up.
       usesCleartextTraffic: true,
+      permissions: ['ACCESS_FINE_LOCATION', 'ACCESS_COARSE_LOCATION'],
     },
-    plugins: ['expo-router', 'expo-secure-store', 'expo-font'],
+    plugins: [
+      'expo-router',
+      'expo-secure-store',
+      'expo-font',
+      // Foreground location only. The app asks for a fix when the tech taps
+      // "use my location" and at no other time — there is no tracking here,
+      // and asking for background access would be asking for something the app
+      // does not use.
+      [
+        'expo-location',
+        {
+          locationAlwaysAndWhenInUsePermission:
+            'FTTH Field uses your location to pin customer premises, because the ' +
+            'villages it serves have no street addresses.',
+          locationWhenInUsePermission:
+            'FTTH Field uses your location to pin customer premises, because the ' +
+            'villages it serves have no street addresses.',
+          isAndroidBackgroundLocationEnabled: false,
+        },
+      ],
+    ],
     experiments: {
       typedRoutes: false,
     },

@@ -2,10 +2,14 @@ import { Tabs } from 'expo-router';
 import { Text, View } from 'react-native';
 import { colors, fonts } from '../../src/theme';
 
-// Three tabs, exactly as the mockup's bottom bar: Stock / Install / History.
-// Glyphs rather than an icon library — three characters is not worth a
+// Three tabs: Jobs / Stock / History. The mockup's bar said Stock / Install /
+// History, from when an install was the thing being recorded. A job is, now —
+// it owns the unit fitted, the materials, the labour and the costs — so it
+// leads, and it is where the app opens.
+//
+// Glyphs rather than an icon library: three characters is not worth a
 // dependency, and they render identically on both platforms.
-const GLYPHS = { stock: '▦', install: '⌖', history: '⟲' };
+const GLYPHS = { stock: '▦', jobs: '⌖', history: '⟲' };
 
 function TabIcon({ name, color }) {
   return (
@@ -34,17 +38,17 @@ export default function TabsLayout() {
       }}
     >
       <Tabs.Screen
+        name="jobs"
+        options={{
+          title: 'Jobs',
+          tabBarIcon: ({ color }) => <TabIcon name="jobs" color={color} />,
+        }}
+      />
+      <Tabs.Screen
         name="stock"
         options={{
           title: 'Stock',
           tabBarIcon: ({ color }) => <TabIcon name="stock" color={color} />,
-        }}
-      />
-      <Tabs.Screen
-        name="install"
-        options={{
-          title: 'Install',
-          tabBarIcon: ({ color }) => <TabIcon name="install" color={color} />,
         }}
       />
       <Tabs.Screen

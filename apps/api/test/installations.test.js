@@ -85,12 +85,15 @@ test('installing twice at the same premises conflicts', async () => {
 test('the database refuses a second active installation even without the app check', async () => {
   await install({ customer_premises_id: world.premises.id, item_instance_id: unitA.id });
 
+  const job = await h.createJob({ premisesId: world.premises.id, techId: world.tech.id });
+
   await assert.rejects(
     () =>
       h.db.query(
-        `INSERT INTO installations (customer_premises_id, item_instance_id, installed_by)
-         VALUES ($1, $2, $3)`,
-        [world.premises.id, unitB.id, world.tech.id]
+        `INSERT INTO installations
+           (customer_premises_id, item_instance_id, installed_by, work_order_id)
+         VALUES ($1, $2, $3, $4)`,
+        [world.premises.id, unitB.id, world.tech.id, job.id]
       ),
     (err) => err.constraint === 'uq_active_installation_per_premises'
   );

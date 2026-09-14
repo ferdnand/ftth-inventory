@@ -17,8 +17,60 @@ const {
   parseServiceLines,
   writeServiceLines,
   serviceLinesByInstallation,
-} = require('../lib/installationServices');
+} = require('../lib/jobLines');
 const { isFieldTech, requireRole } = require('../middleware/auth');
+
+// Every installation belongs to a job (012_jobs.sql). A caller may name one —
+// the manager dispatched it, or the tech opened it on arrival — and if nobody
+// did, one is opened here.
+//
+// That is the whole point of the change: the manager does not ticket every
+// visit, so an install with no job used to be an install with nowhere to record
+// what it consumed. Now the job always exists and the materials, labour and
+// expenses have somewhere to hang.
+async function resolveJob(client, { premisesId, requestedJobId, user, type }) {
+  if (requestedJobId) {
+    const found = await client.query(
+      `SELECT id, customer_premises_id, assigned_tech_id, status
+       FROM work_orders WHERE id = $1`,
+      [requestedJobId]
+    );
+    if (found.rows.length === 0) throw notFound('work_order not found');
+    const job = found.rows[0];
+
+    // 012 enforces this with a trigger as well. Catching it here says which
+    // premises the job is actually at.
+    if (Number(job.customer_premises_id) !== Number(premisesId)) {
+      throw badRequest(
+        `Job ${job.id} is at a different premises — a job and its installation ` +
+          'have to be at the same address'
+      );
+    }
+    if (isFieldTech(user) && Number(job.assigned_tech_id) !== user.id) {
+      throw forbidden('That job is not assigned to you');
+    }
+    if (job.status === 'cancelled') {
+      throw conflict(`Job ${job.id} was cancelled — open a new one for this visit`);
+    }
+    return job.id;
+  }
+
+  const created = await client.query(
+    `INSERT INTO work_orders
+       (customer_premises_id, type, status, assigned_tech_id, created_by, performed_on, notes)
+     VALUES ($1, $2, 'in_progress', $3, $4, $5, $6)
+     RETURNING id`,
+    [
+      premisesId,
+      type,
+      isFieldTech(user) ? user.id : null,
+      user.id,
+      new Date().toISOString().slice(0, 10),
+      'Job opened automatically for this visit',
+    ]
+  );
+  return created.rows[0].id;
+}
 
 // Where a unit coming out of service should be parked. A tech carries it in
 // their van; warehouse staff must say explicitly.
@@ -67,7 +119,11 @@ async function assertPremisesExists(client, premisesId) {
 // POST /api/installations
 // First-time install at a premises with no active router.
 // body: { customer_premises_id, item_instance_id, work_order_id?, services?, idempotency_key? }
-//   services: [{ service_id, quantity?, notes? }] — labour performed on this visit
+//   services: [{ service_id, quantity?, unit_rate?, notes? }] — labour on this visit
+//
+// work_order_id is optional and stays optional, but the row is not: leaving it
+// out opens a job for this visit rather than recording an install that belongs
+// to nothing. Record materials and expenses against the job that comes back.
 //
 // installed_by is derived from the token and must not be sent.
 router.post(
@@ -118,15 +174,22 @@ router.post(
       assertInstanceReachable(req.user, instance);
       const fromLocationId = instance.current_location_id;
 
+      const jobId = await resolveJob(client, {
+        premisesId,
+        requestedJobId: workOrderId,
+        user: req.user,
+        type: 'new_install',
+      });
+
       const installation = await client.query(
         `INSERT INTO installations
           (customer_premises_id, item_instance_id, installed_by, work_order_id, idempotency_key)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [premisesId, instanceId, installedBy, workOrderId, idempotencyKey]
+        [premisesId, instanceId, installedBy, jobId, idempotencyKey]
       );
 
-      await writeServiceLines(client, installation.rows[0].id, serviceLines);
+      await writeServiceLines(client, jobId, serviceLines);
 
       await client.query(
         `UPDATE item_instances
@@ -147,7 +210,7 @@ router.post(
           instance.item_id,
           instanceId,
           fromLocationId,
-          workOrderId,
+          jobId,
           installedBy,
           `Installed at premises ${premisesId}`,
         ]
@@ -179,8 +242,8 @@ router.post(
 // body: { new_item_instance_id, removal_reason, work_order_id?,
 //         return_to_location_id?, services?, idempotency_key? }
 //
-// `services` records the labour of THIS visit against the new installation, not
-// against the one being closed out — the work was done today.
+// `services` records the labour of THIS visit, against the job the replacement
+// belongs to rather than the one being closed out — the work was done today.
 //
 // NOTE: :premisesId is a customer_premises id, NOT an installation id.
 router.post(
@@ -256,12 +319,22 @@ router.post(
       );
 
       // 2. Create the new installation
+      // A swap for a better unit is an upgrade; a swap because the old one
+      // died is a repair. Both are the same action to the tech, and the
+      // distinction is worth keeping because it is the one the reports read.
+      const jobId = await resolveJob(client, {
+        premisesId,
+        requestedJobId: workOrderId,
+        user: req.user,
+        type: removalReason === 'upgrade' ? 'upgrade' : 'repair',
+      });
+
       const newInstallation = await client.query(
         `INSERT INTO installations
           (customer_premises_id, item_instance_id, installed_by, work_order_id, idempotency_key)
          VALUES ($1, $2, $3, $4, $5)
          RETURNING *`,
-        [premisesId, newInstanceId, performedBy, workOrderId, idempotencyKey]
+        [premisesId, newInstanceId, performedBy, jobId, idempotencyKey]
       );
       await client.query(
         `UPDATE item_instances
@@ -270,7 +343,7 @@ router.post(
          WHERE id = $1`,
         [newInstanceId]
       );
-      await writeServiceLines(client, newInstallation.rows[0].id, serviceLines);
+      await writeServiceLines(client, jobId, serviceLines);
 
       // 3. Log both movements in the audit trail
       await client.query(
@@ -281,7 +354,7 @@ router.post(
         [
           activeInstallation.item_instance_id,
           returnTo,
-          workOrderId,
+          jobId,
           performedBy,
           `Removed from premises ${premisesId} — reason: ${removalReason}`,
         ]
@@ -294,7 +367,7 @@ router.post(
           newInstance.item_id,
           newInstanceId,
           fromLocationId,
-          workOrderId,
+          jobId,
           performedBy,
           `Installed (replacement) at premises ${premisesId}`,
         ]
@@ -420,16 +493,18 @@ router.patch(
 );
 
 // PUT /api/installations/:id/services
-// Replaces the recorded labour for one installation.
-// body: { services: [{ service_id, quantity?, notes? }] }
+// Replaces the recorded labour for the JOB this installation belongs to.
+// body: { services: [{ service_id, quantity?, unit_rate?, notes? }] }
 //
 // PUT rather than POST because the body is the complete list: sending [] is how
 // you clear it, and re-sending the same list twice leaves the same rows. A tech
 // on a flaky connection can retry safely without needing an idempotency key.
 //
-// This exists because the warehouse dashboard never creates an installation —
-// installs happen in the field — so without it the web UI could only ever read
-// the work, never correct a mistyped cable length.
+// Kept as an installation-addressed route although 013 moved labour onto the
+// job, because "record the work on this router" is how the premises screens are
+// laid out and an installation names exactly one job. PUT
+// /api/work-orders/:id/services is the same write reached from the job side,
+// and is the one to use when the visit fitted no hardware at all.
 router.put(
   '/:id/services',
   asyncHandler(async (req, res) => {
@@ -441,11 +516,19 @@ router.put(
       await client.query('BEGIN');
 
       const found = await client.query(
-        'SELECT id, installed_by, removed_at FROM installations WHERE id = $1 FOR UPDATE',
+        `SELECT inst.id, inst.installed_by, inst.removed_at, inst.work_order_id, wo.status
+         FROM installations inst
+         JOIN work_orders wo ON wo.id = inst.work_order_id
+         WHERE inst.id = $1
+         FOR UPDATE OF inst, wo`,
         [id]
       );
       if (found.rows.length === 0) throw notFound('Installation not found');
       const installation = found.rows[0];
+
+      if (installation.status === 'cancelled') {
+        throw conflict('That job was cancelled — open a new one to record work against it');
+      }
 
       // A tech corrects their own job while it is still the live one. Fixing
       // the record of a visit that has since been replaced is a back-office
@@ -461,11 +544,15 @@ router.put(
         }
       }
 
-      await writeServiceLines(client, id, lines);
+      await writeServiceLines(client, Number(installation.work_order_id), lines);
       await client.query('COMMIT');
 
       const grouped = await serviceLinesByInstallation(db, [id]);
-      res.json({ installation_id: id, services: grouped[id] ?? [] });
+      res.json({
+        installation_id: id,
+        work_order_id: Number(installation.work_order_id),
+        services: grouped[id] ?? [],
+      });
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
       throw err;

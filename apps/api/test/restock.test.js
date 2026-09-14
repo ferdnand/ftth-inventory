@@ -446,7 +446,10 @@ test('the summary counts active installations and open work orders', async () =>
   const res = await h.api.get('/api/reports/summary', { as: world.staff });
   assert.equal(res.status, 200);
   assert.equal(res.body.summary.active_installations, 1);
-  assert.equal(res.body.summary.open_work_orders, 1);
+  // Two: the repair ticket above, plus the job the install opened for itself
+  // because it named none. An install that belongs to no job is what 012 set
+  // out to make impossible, and a job nobody has closed is worth seeing here.
+  assert.equal(res.body.summary.open_work_orders, 2);
   assert.equal(res.body.summary.installs_this_month, 1);
 });
 

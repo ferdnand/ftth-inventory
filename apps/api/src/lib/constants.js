@@ -10,6 +10,21 @@ const USER_ROLES = ['warehouse_staff', 'field_tech', 'pm', 'admin'];
 const REMOVAL_REASONS = ['faulty', 'upgrade', 'customer_cancelled', 'theft', 'other'];
 const WORK_ORDER_TYPES = ['new_install', 'repair', 'upgrade', 'removal'];
 const WORK_ORDER_STATUSES = ['open', 'in_progress', 'completed', 'cancelled'];
+const PREMISES_TYPES = ['household', 'business', 'institution', 'multi_dwelling'];
+const JOB_EXPENSE_CATEGORIES = [
+  'transport',
+  'casual_labour',
+  'permit',
+  'accommodation',
+  'airtime',
+  'other',
+];
+
+// The two sites this deployment covers. Seeded as `locations` of type 'site' by
+// 011_sites_and_premises_capture.sql — this list is here so the clients can
+// label a site without a round trip, not as a second source of truth. Adding a
+// third site is an INSERT into locations, not an edit here.
+const SITE_NAMES = ['Bungoma', 'Kisumu'];
 const RESTOCK_STATUSES = ['requested', 'approved', 'fulfilled', 'rejected', 'cancelled'];
 
 // The full DB enum includes 'install' and 'adjustment', but POST /api/transactions
@@ -51,6 +66,9 @@ module.exports = {
   REMOVAL_REASONS,
   WORK_ORDER_TYPES,
   WORK_ORDER_STATUSES,
+  PREMISES_TYPES,
+  JOB_EXPENSE_CATEGORIES,
+  SITE_NAMES,
   RESTOCK_STATUSES,
   TRANSACTION_TYPES,
   CLIENT_TRANSACTION_TYPES,

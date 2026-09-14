@@ -45,7 +45,7 @@ export default function RecordWorkScreen() {
 
   if (current.isPending || services.isPending) return <Loading label="Loading" />;
 
-  const address = history.data?.premises?.address ?? `Premises ${premisesId}`;
+  const address = history.data?.premises?.label ?? `Premises ${premisesId}`;
   const installation = current.data;
 
   if (!installation) {

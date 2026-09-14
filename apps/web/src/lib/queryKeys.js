@@ -19,7 +19,8 @@ export const keys = {
 
   transactions: (params) => ['transactions', params ?? {}],
 
-  premisesSearch: (q) => ['premises', 'search', q],
+  premisesSearch: (q, siteId) => ['premises', 'search', q, siteId ?? 'all'],
+  premisesList: (params) => ['premises', 'list', params ?? {}],
   premises: (id) => ['premises', id],
   currentInstallation: (id) => ['premises', id, 'current'],
   premisesHistory: (id) => ['premises', id, 'history'],
@@ -37,6 +38,7 @@ export const keys = {
   reportTechActivity: (params) => ['reports', 'tech-activity', params ?? {}],
   reportInstallationTrends: (params) => ['reports', 'installation-trends', params ?? {}],
   reportServices: (params) => ['reports', 'services', params ?? {}],
+  reportJobCosts: (params) => ['reports', 'job-costs', params ?? {}],
   reportStockByLocation: ['reports', 'stock-by-location'],
 };
 
@@ -55,4 +57,15 @@ export function invalidateAfterInstallation(queryClient, premisesId) {
   invalidateAfterStockChange(queryClient);
   queryClient.invalidateQueries({ queryKey: ['premises', premisesId] });
   queryClient.invalidateQueries({ queryKey: ['work-orders'] });
+}
+
+// Everything editing a job's lines makes stale. Materials move stock, so those
+// go through invalidateAfterStockChange as well — see useSetJobMaterials.
+export function invalidateAfterJobChange(queryClient, jobId) {
+  queryClient.invalidateQueries({ queryKey: ['work-orders'] });
+  queryClient.invalidateQueries({ queryKey: ['reports'] });
+  if (jobId) queryClient.invalidateQueries({ queryKey: keys.workOrder(jobId) });
+  // Labour hangs off the job since 013, and the premises timeline reads it back
+  // through the installation's job.
+  queryClient.invalidateQueries({ queryKey: ['premises'] });
 }

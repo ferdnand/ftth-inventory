@@ -8,6 +8,7 @@ import { NumberInput, Select, TextInput } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
+import { formatMoney } from '../lib/money';
 import { TRACKING_TYPES, label } from '../lib/constants';
 
 const UNITS = ['unit', 'meter', 'box', 'roll', 'metre'];
@@ -24,6 +25,7 @@ function ItemFormDialog({ onClose, categories }) {
     manufacturer: '',
     model: '',
     reorder_threshold: '',
+    unit_cost: '',
   });
   const [errors, setErrors] = useState({});
 
@@ -38,6 +40,9 @@ function ItemFormDialog({ onClose, categories }) {
     if (!form.unit_of_measure.trim()) next.unit_of_measure = 'Required';
     if (form.reorder_threshold !== '' && Number(form.reorder_threshold) < 0) {
       next.reorder_threshold = 'Cannot be negative';
+    }
+    if (form.unit_cost !== '' && Number(form.unit_cost) < 0) {
+      next.unit_cost = 'Cannot be negative';
     }
     setErrors(next);
     return Object.keys(next).length === 0;
@@ -56,6 +61,7 @@ function ItemFormDialog({ onClose, categories }) {
         model: form.model.trim() || undefined,
         reorder_threshold:
           form.reorder_threshold === '' ? undefined : Number(form.reorder_threshold),
+        unit_cost: form.unit_cost === '' ? undefined : Number(form.unit_cost),
       });
       notify(`${form.name.trim()} added to the catalog`);
       onClose();
@@ -136,6 +142,19 @@ function ItemFormDialog({ onClose, categories }) {
             min="0"
             hint="Leave blank to skip low-stock alerts for this item."
           />
+          {/* What makes a job total mean anything. A job line copies this
+              figure when the work is recorded, so setting it later prices
+              future jobs and leaves past ones exactly as they were. */}
+          <NumberInput
+            id="unit_cost"
+            label="Unit cost (KES)"
+            value={form.unit_cost}
+            onChange={set('unit_cost')}
+            error={errors.unit_cost}
+            min="0"
+            step="any"
+            hint="Per unit of measure. Blank means unpriced, and job totals will say so."
+          />
         </div>
 
         <div className="field-row">
@@ -202,6 +221,12 @@ export function ItemsPage() {
       header: 'Reorder at',
       numeric: true,
       render: (row) => (row.reorder_threshold ?? '—'),
+    },
+    {
+      key: 'unit_cost',
+      header: 'Unit cost',
+      numeric: true,
+      render: (row) => formatMoney(row.unit_cost),
     },
   ];
 

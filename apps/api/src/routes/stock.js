@@ -38,8 +38,11 @@ router.get(
     );
 
     const bulk = await db.query(
+      // unit_cost travels with the row so the field app can price a material
+      // line as the tech types it. Without it the app would need a second
+      // request to /api/items on a village connection just to show "22 per m".
       `SELECT sl.item_id, sl.quantity, i.name AS item_name, i.category,
-              i.unit_of_measure, i.reorder_threshold,
+              i.unit_of_measure, i.reorder_threshold, i.unit_cost,
               COALESCE(sl.quantity <= i.reorder_threshold, FALSE) AS is_low_stock
        FROM stock_levels sl
        JOIN items i ON i.id = sl.item_id
@@ -87,8 +90,11 @@ router.get(
     );
 
     const bulk = await db.query(
+      // unit_cost travels with the row so the field app can price a material
+      // line as the tech types it. Without it the app would need a second
+      // request to /api/items on a village connection just to show "22 per m".
       `SELECT sl.item_id, sl.quantity, i.name AS item_name, i.category,
-              i.unit_of_measure, i.reorder_threshold,
+              i.unit_of_measure, i.reorder_threshold, i.unit_cost,
               COALESCE(sl.quantity <= i.reorder_threshold, FALSE) AS is_low_stock
        FROM stock_levels sl
        JOIN items i ON i.id = sl.item_id

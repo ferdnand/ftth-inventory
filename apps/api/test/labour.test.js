@@ -1,5 +1,11 @@
-// Labour recorded against an installation: what an install writes, what the
-// premises views read back, and who is allowed to amend it afterwards.
+// Labour: what an install writes, what the premises views read back, and who is
+// allowed to amend it afterwards.
+//
+// 013 moved these lines from `installation_services` to `job_services`, so the
+// route under test writes to the installation's JOB. The read path is unchanged
+// on purpose — the premises timeline still answers "what work was done on this
+// visit" per installation, resolved through installations.work_order_id — and
+// these tests are what hold that shape in place.
 const { test, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
 
@@ -187,15 +193,35 @@ test('a replacement records its own labour and leaves the earlier visit alone', 
   assert.deepEqual(byId[replaced.body.installation.id], ['Cable Run']);
 });
 
-test('recorded work disappears with the installation it describes', async () => {
+// Labour describes the visit, not the hardware. Since 013 it hangs off the job,
+// which is what lets a visit that fitted nothing record any — so deleting the
+// installation must NOT take the labour with it. Deleting the job does.
+test('recorded work outlives the installation and disappears with the job', async () => {
   const created = await install({ ...baseInstall(), services: [{ service_id: splicing.id }] });
-  await h.db.query('DELETE FROM installations WHERE id = $1', [created.body.installation.id]);
+  const jobId = created.body.installation.work_order_id;
 
-  const left = await h.db.query(
-    'SELECT count(*)::int AS n FROM installation_services WHERE installation_id = $1',
-    [created.body.installation.id]
+  await h.db.query('DELETE FROM installations WHERE id = $1', [created.body.installation.id]);
+  const afterInstall = await h.db.query(
+    'SELECT count(*)::int AS n FROM job_services WHERE work_order_id = $1',
+    [jobId]
   );
-  assert.equal(left.rows[0].n, 0);
+  assert.equal(afterInstall.rows[0].n, 1);
+
+  // The install's own job cannot be deleted while the audit trail points at it,
+  // which is the point of transactions being append-only. Prove the cascade on
+  // a job with no movements behind it.
+  const bare = await h.createJob({ premisesId: world.premises.id, techId: world.tech.id });
+  await h.api.put(`/api/work-orders/${bare.id}/services`, {
+    as: world.tech,
+    body: { services: [{ service_id: splicing.id }] },
+  });
+
+  await h.db.query('DELETE FROM work_orders WHERE id = $1', [bare.id]);
+  const afterJob = await h.db.query(
+    'SELECT count(*)::int AS n FROM job_services WHERE work_order_id = $1',
+    [bare.id]
+  );
+  assert.equal(afterJob.rows[0].n, 0);
 });
 
 // --- Reporting ------------------------------------------------------------
@@ -267,11 +293,13 @@ test('grouped by tech, the report counts work but reports no mixed-unit quantity
 });
 
 // The window is on when the work was DONE, not when it was typed in.
-test('the report window follows the installation date, not the recording date', async () => {
+// The window is on the job's performed_on: the day the work was done, not the
+// day the phone had signal to send it.
+test('the report window follows the day the work was done, not the recording date', async () => {
   const created = await install({ ...baseInstall(), services: [{ service_id: splicing.id }] });
   await h.db.query(
-    "UPDATE installations SET installed_at = now() - interval '90 days' WHERE id = $1",
-    [created.body.installation.id]
+    `UPDATE work_orders SET performed_on = (now() - interval '90 days')::date WHERE id = $1`,
+    [created.body.installation.work_order_id]
   );
 
   const recent = await servicesReport(

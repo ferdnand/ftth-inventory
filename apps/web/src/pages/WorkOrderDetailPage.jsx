@@ -1,18 +1,21 @@
+import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import {
-  useTransactions,
-  useUpdateWorkOrder,
-  useUsers,
-  useWorkOrder,
-} from '../hooks/useData';
+import { useTransactions, useUpdateWorkOrder, useUsers, useWorkOrder } from '../hooks/useData';
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
-import { Select } from '../components/fields';
+import { DateInput, Select } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
-import { formatDate, formatDateTime, formatPremisesCode } from '../lib/format';
+import {
+  EditJobExpensesDialog,
+  EditJobMaterialsDialog,
+  EditJobServicesDialog,
+  JobCostCard,
+} from '../components/JobLines';
+import { formatDate, formatDateTime, formatPremisesCode, formatQuantity } from '../lib/format';
+import { formatMoney } from '../lib/money';
 import { label } from '../lib/constants';
 
 // Mirrors STATUS_TRANSITIONS in the API. A completed or cancelled job is
@@ -24,6 +27,13 @@ const NEXT_STATUSES = {
   cancelled: [],
 };
 
+// One job, and everything it produced: the unit fitted, the materials, the
+// labour, the money, and what it all came to.
+//
+// The dashboard cannot open a job — jobs happen in the field — so everything
+// here is either progressing one or correcting it. The three dialogs are the
+// back office for a phone: a cable length typed wrong, a fare remembered on the
+// drive home, a price nobody had set on the day.
 export function WorkOrderDetailPage() {
   const { id } = useParams();
   const workOrderId = Number(id);
@@ -35,22 +45,12 @@ export function WorkOrderDetailPage() {
   const update = useUpdateWorkOrder();
   const { notify, notifyError } = useToast();
 
-  async function setStatus(status) {
-    try {
-      await update.mutateAsync({ id: workOrderId, status });
-      notify(`Job #${workOrderId} is now ${label(status).toLowerCase()}`);
-    } catch (err) {
-      notifyError(err);
-    }
-  }
+  const [editing, setEditing] = useState(null);
 
-  async function reassign(techId) {
+  async function patch(body, message) {
     try {
-      await update.mutateAsync({
-        id: workOrderId,
-        assigned_tech_id: techId === '' ? null : Number(techId),
-      });
-      notify('Job reassigned');
+      await update.mutateAsync({ id: workOrderId, ...body });
+      notify(message);
     } catch (err) {
       notifyError(err);
     }
@@ -72,7 +72,12 @@ export function WorkOrderDetailPage() {
   }
 
   const wo = workOrder.data;
+  const premises = wo.premises ?? {};
   const nextStatuses = NEXT_STATUSES[wo.status];
+  const materials = wo.materials ?? [];
+  const services = wo.services ?? [];
+  const expenses = wo.expenses ?? [];
+  const canEdit = hasRole('warehouse_staff', 'pm');
 
   const partColumns = [
     { key: 'type', header: 'Movement', render: (row) => label(row.type) },
@@ -101,10 +106,15 @@ export function WorkOrderDetailPage() {
     <div className="page">
       <PageHeader
         eyebrow={`Job #${wo.id} · ${label(wo.type)}`}
-        title={wo.address}
-        sub={`${formatPremisesCode(wo.customer_premises_id)}${
-          wo.customer_account_id ? ` · ${wo.customer_account_id}` : ''
-        }`}
+        title={wo.label}
+        sub={[
+          formatPremisesCode(wo.customer_premises_id),
+          wo.site_name,
+          premises.customer_name,
+          premises.customer_phone,
+        ]
+          .filter(Boolean)
+          .join(' · ')}
         actions={
           <Link className="btn-secondary" to={`/premises/${wo.customer_premises_id}`}>
             Site history
@@ -125,25 +135,47 @@ export function WorkOrderDetailPage() {
           </div>
           <div className="lbl">Assigned tech</div>
         </div>
+        {/* The day the work was DONE, which is the figure every cost report
+          * windows on — not the day it reached the server. */}
         <div className="stat">
           <div className="num" style={{ fontSize: 15 }}>
-            {formatDate(wo.scheduled_date)}
+            {formatDate(wo.performed_on)}
           </div>
-          <div className="lbl">Scheduled</div>
+          <div className="lbl">Work done</div>
         </div>
         <div className="stat">
           <div className="num" style={{ fontSize: 15 }}>
-            {wo.completed_at ? formatDate(wo.completed_at) : '—'}
+            {formatMoney(wo.costs?.total)}
           </div>
-          <div className="lbl">Completed</div>
+          <div className="lbl">Job cost</div>
         </div>
       </div>
 
+      {/* --- Where ------------------------------------------------------- */}
+      <div className="section-label">The premises</div>
+      <div className="card">
+        <div className="item-name">{premises.label ?? wo.label}</div>
+        <div className="item-meta">
+          {[label(premises.premises_type), premises.village, wo.site_name]
+            .filter(Boolean)
+            .join(' · ')}
+        </div>
+        {premises.landmark ? <div className="item-meta">{premises.landmark}</div> : null}
+        <div className="item-meta">
+          {premises.gps_lat === null || premises.gps_lat === undefined
+            ? 'No GPS pin — nobody can find this place from the record alone'
+            : `Pin ${Number(premises.gps_lat).toFixed(5)}, ${Number(premises.gps_lng).toFixed(5)}` +
+              (premises.gps_accuracy_m ? ` (±${premises.gps_accuracy_m} m)` : '')}
+        </div>
+      </div>
+
+      {/* --- Progress ---------------------------------------------------- */}
       <div className="section-label">Progress</div>
       <div className="card">
         {nextStatuses.length === 0 ? (
           <div style={{ color: 'var(--text-2)', fontSize: 13 }}>
-            This job is {label(wo.status).toLowerCase()} and cannot change status again.
+            This job is {label(wo.status).toLowerCase()} and cannot change status again. Its lines
+            can still be corrected{wo.status === 'cancelled' ? ' — except on a cancelled job' : ''}.
           </div>
         ) : (
           <div className="stepper">
@@ -152,7 +184,9 @@ export function WorkOrderDetailPage() {
                 key={status}
                 type="button"
                 className={status === 'cancelled' ? 'btn-danger btn-sm' : 'btn-secondary btn-sm'}
-                onClick={() => setStatus(status)}
+                onClick={() =>
+                  patch({ status }, `Job #${workOrderId} is now ${label(status).toLowerCase()}`)
+                }
                 disabled={update.isPending}
               >
                 {status === 'open' ? 'Reopen' : `Mark ${label(status).toLowerCase()}`}
@@ -161,15 +195,38 @@ export function WorkOrderDetailPage() {
           </div>
         )}
 
-        {hasRole('warehouse_staff', 'pm') ? (
-          <div style={{ marginTop: 14, maxWidth: 320 }}>
+        {canEdit ? (
+          <div className="field-row" style={{ marginTop: 14 }}>
             <Select
               id="reassign"
               label="Reassign"
               value={wo.assigned_tech_id ? String(wo.assigned_tech_id) : ''}
-              onChange={reassign}
+              onChange={(techId) =>
+                patch(
+                  { assigned_tech_id: techId === '' ? null : Number(techId) },
+                  'Job reassigned'
+                )
+              }
               placeholder="Unassigned"
               options={(techs.data ?? []).map((u) => ({ value: String(u.id), label: u.name }))}
+            />
+            {/* Correctable because the tech is often recording Friday's work on
+              * Monday, and every cost report buckets on this date. */}
+            <DateInput
+              id="performed-on"
+              label="Day the work was done"
+              value={wo.performed_on ?? ''}
+              onChange={(value) =>
+                patch({ performed_on: value === '' ? null : value }, 'Work date updated')
+              }
+            />
+            <DateInput
+              id="scheduled"
+              label="Scheduled for"
+              value={wo.scheduled_date ?? ''}
+              onChange={(value) =>
+                patch({ scheduled_date: value === '' ? null : value }, 'Schedule updated')
+              }
             />
           </div>
         ) : null}
@@ -182,7 +239,162 @@ export function WorkOrderDetailPage() {
         ) : null}
       </div>
 
-      <div className="section-label">Parts used on this job</div>
+      {/* --- What was fitted --------------------------------------------- */}
+      <div className="section-label">Hardware fitted</div>
+      {(wo.installations ?? []).length === 0 ? (
+        <EmptyState title="No router fitted on this job">
+          A repair or a survey may not need one. Installs are recorded in the field.
+        </EmptyState>
+      ) : (
+        <div className="card">
+          {wo.installations.map((row) => (
+            <div className="card flat" key={row.installation_id}>
+              <div>
+                <div className="item-name">{row.item_name}</div>
+                <div className="item-meta">
+                  {row.serial_number}
+                  {row.mac_address ? ` · ${row.mac_address}` : ''}
+                </div>
+                <div className="item-meta">
+                  Fitted {formatDate(row.installed_at)} by {row.installed_by_name}
+                  {row.removed_at ? ` · removed ${formatDate(row.removed_at)}` : ''}
+                </div>
+              </div>
+              <div className="num">{formatMoney(row.unit_cost)}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* --- The three kinds of line ------------------------------------- */}
+      <div className="section-label">Materials used</div>
+      <div className="card">
+        {materials.length === 0 ? (
+          <div className="item-meta">Nothing recorded.</div>
+        ) : (
+          <table className="lines-table">
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th className="num">Amount</th>
+                <th className="num">Unit cost</th>
+                <th className="num">Line</th>
+                <th>From</th>
+              </tr>
+            </thead>
+            <tbody>
+              {materials.map((line) => (
+                <tr key={line.item_id}>
+                  <td>
+                    <div className="item-name">{line.name}</div>
+                    {line.notes ? <div className="item-meta">{line.notes}</div> : null}
+                  </td>
+                  <td className="num">{formatQuantity(line.quantity, line.unit_of_measure)}</td>
+                  <td className="num">{formatMoney(line.unit_cost)}</td>
+                  <td className="num">{formatMoney(line.line_total)}</td>
+                  <td className="item-meta">{line.from_location_name ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {canEdit ? (
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setEditing('materials')}
+          >
+            {materials.length === 0 ? 'Record materials' : 'Correct materials'}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="section-label">Work performed</div>
+      <div className="card">
+        {services.length === 0 ? (
+          <div className="item-meta">Nothing recorded.</div>
+        ) : (
+          <table className="lines-table">
+            <thead>
+              <tr>
+                <th>Service</th>
+                <th className="num">Amount</th>
+                <th className="num">Rate</th>
+                <th className="num">Line</th>
+              </tr>
+            </thead>
+            <tbody>
+              {services.map((line) => (
+                <tr key={line.service_id}>
+                  <td>
+                    <div className="item-name">{line.name}</div>
+                    {line.notes ? <div className="item-meta">{line.notes}</div> : null}
+                  </td>
+                  <td className="num">
+                    {line.unit_of_measure === 'job'
+                      ? '1 visit'
+                      : formatQuantity(line.quantity, line.unit_of_measure)}
+                  </td>
+                  <td className="num">{formatMoney(line.unit_rate)}</td>
+                  <td className="num">{formatMoney(line.line_total)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {canEdit ? (
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setEditing('services')}
+          >
+            {services.length === 0 ? 'Record work' : 'Correct work'}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="section-label">Other costs</div>
+      <div className="card">
+        {expenses.length === 0 ? (
+          <div className="item-meta">Nothing recorded.</div>
+        ) : (
+          <table className="lines-table">
+            <thead>
+              <tr>
+                <th>Kind</th>
+                <th>What for</th>
+                <th className="num">Amount</th>
+                <th>Recorded by</th>
+              </tr>
+            </thead>
+            <tbody>
+              {expenses.map((line) => (
+                <tr key={line.id}>
+                  <td>{label(line.category)}</td>
+                  <td className="item-meta">{line.description ?? '—'}</td>
+                  <td className="num">{formatMoney(line.amount)}</td>
+                  <td className="item-meta">{line.recorded_by_name ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {canEdit ? (
+          <button
+            type="button"
+            className="btn-secondary btn-sm"
+            onClick={() => setEditing('expenses')}
+          >
+            {expenses.length === 0 ? 'Record costs' : 'Correct costs'}
+          </button>
+        ) : null}
+      </div>
+
+      <div className="section-label">What the job cost</div>
+      <JobCostCard costs={wo.costs} />
+
+      {/* --- The audit trail --------------------------------------------- */}
+      <div className="section-label">Stock movements behind this job</div>
       {parts.isPending ? (
         <LoadingRows rows={3} />
       ) : parts.isError ? (
@@ -194,12 +406,34 @@ export function WorkOrderDetailPage() {
           rowKey={(row) => row.id}
           empty={
             <EmptyState title="No stock linked to this job">
-              Movements only appear here if they were recorded against this work order — the link is
-              always optional.
+              Recording materials or fitting a router writes rows here. A correction that puts
+              stock back writes one too — the trail is append-only.
             </EmptyState>
           }
         />
       )}
+
+      {editing === 'materials' ? (
+        <EditJobMaterialsDialog
+          jobId={workOrderId}
+          current={materials}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+      {editing === 'services' ? (
+        <EditJobServicesDialog
+          jobId={workOrderId}
+          current={services}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
+      {editing === 'expenses' ? (
+        <EditJobExpensesDialog
+          jobId={workOrderId}
+          current={expenses}
+          onClose={() => setEditing(null)}
+        />
+      ) : null}
     </div>
   );
 }

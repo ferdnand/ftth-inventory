@@ -14,6 +14,7 @@ const catalogRoutes = require('./routes/catalog');
 const usersRoutes = require('./routes/users');
 const itemInstancesRoutes = require('./routes/itemInstances');
 const restockRequestsRoutes = require('./routes/restockRequests');
+const jobsRoutes = require('./routes/jobs');
 const reportsRoutes = require('./routes/reports');
 
 const app = express();
@@ -42,7 +43,8 @@ app.use('/api/users', usersRoutes);
 app.use('/api/item-instances', itemInstancesRoutes);
 app.use('/api/restock-requests', restockRequestsRoutes);
 app.use('/api/reports', reportsRoutes);
-app.use('/api', catalogRoutes); // /api/items, /api/locations, /api/work-orders
+app.use('/api/work-orders', jobsRoutes);
+app.use('/api', catalogRoutes); // /api/items, /api/locations, /api/services
 
 app.use((req, res) => res.status(404).json({ error: 'Not found' }));
 app.use(errorHandler);

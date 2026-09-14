@@ -26,6 +26,10 @@ router.use(requireRole('warehouse_staff', 'pm'));
 const CONSUMPTION_TYPES = "('install', 'issue')";
 const CONSUMED_QUANTITY = "SUM(COALESCE(t.quantity, 1))";
 
+// Money adds up through JS floats on its way out of pg; a costing tile should
+// not read 1200.0000000000002.
+const round2 = (n) => Math.round(n * 100) / 100;
+
 // Default window for every report that takes one.
 function dateRange(query) {
   const from = optionalDate(query.from, 'from');
@@ -190,9 +194,17 @@ router.get(
 // not stock leaving the business, and folding the two together would make
 // "consumed" mean two different things in one number.
 //
-// The window is on installations.installed_at — the day the work was DONE, not
-// installation_services.created_at, which is only when someone typed it in. A
-// tech recording Friday's splice on Monday belongs in Friday's figures.
+// The window is on work_orders.performed_on — the day the work was DONE, not
+// created_at, which is only when someone got signal and typed it in. A tech
+// recording Friday's splice on Monday belongs in Friday's figures. Jobs that
+// never said which day fall back to the completion date and then to when the
+// ticket was opened, so a row can never drop out of every window.
+//
+// Labour moved from installations to jobs in 013, which is what lets a visit
+// that fitted no hardware count here at all — a re-splice of a cut cable is
+// billable work and used to be invisible.
+const JOB_WORK_DAY = 'coalesce(wo.performed_on, wo.completed_at::date, wo.created_at::date)';
+
 router.get(
   '/services',
   asyncHandler(async (req, res) => {
@@ -203,8 +215,9 @@ router.get(
     const to = optionalDate(req.query.to, 'to');
 
     const window = `
-      AND ($1::date IS NULL OR inst.installed_at >= $1::date)
-      AND ($2::date IS NULL OR inst.installed_at < $2::date + 1)
+      AND ($1::date IS NULL OR ${JOB_WORK_DAY} >= $1::date)
+      AND ($2::date IS NULL OR ${JOB_WORK_DAY} <= $2::date)
+      AND wo.status <> 'cancelled'
     `;
 
     // Grouped by service, quantity is meaningful: every row is one unit of
@@ -213,29 +226,35 @@ router.get(
     const GROUPINGS = {
       service: {
         select: `s.id AS service_id, s.name AS label, s.unit_of_measure,
-                 SUM(isv.quantity) AS quantity,
+                 SUM(js.quantity) AS quantity,
+                 SUM(js.quantity * js.unit_rate) AS value,
                  COUNT(*)::int AS services_performed,
-                 COUNT(DISTINCT inst.id)::int AS visits`,
+                 COUNT(DISTINCT wo.id)::int AS visits`,
         group: 's.id, s.name, s.unit_of_measure',
         order: 'quantity DESC',
+        join: 'JOIN services s ON s.id = js.service_id',
       },
       tech: {
         select: `u.id AS user_id, u.name AS label, u.role,
                  NULL::numeric AS quantity,
+                 SUM(js.quantity * js.unit_rate) AS value,
                  COUNT(*)::int AS services_performed,
-                 COUNT(DISTINCT inst.id)::int AS visits`,
+                 COUNT(DISTINCT wo.id)::int AS visits`,
         group: 'u.id, u.name, u.role',
         order: 'services_performed DESC, u.name',
+        // A job's labour is credited to whoever it is assigned to, and to
+        // whoever opened it when nobody was assigned — which is the tech, on
+        // every job a tech opens for themselves.
+        join: 'JOIN users u ON u.id = coalesce(wo.assigned_tech_id, wo.created_by)',
       },
     };
     const grouping = GROUPINGS[groupBy];
 
     const rows = await db.query(
       `SELECT ${grouping.select}
-       FROM installation_services isv
-       JOIN services s ON s.id = isv.service_id
-       JOIN installations inst ON inst.id = isv.installation_id
-       JOIN users u ON u.id = inst.installed_by
+       FROM job_services js
+       JOIN work_orders wo ON wo.id = js.work_order_id
+       ${grouping.join}
        WHERE TRUE ${window}
        GROUP BY ${grouping.group}
        ORDER BY ${grouping.order}`,
@@ -246,10 +265,10 @@ router.get(
     // jobs and metres would be a number with no meaning. The tiles read
     // "37 jobs · 412 m", not "449".
     const byUnit = await db.query(
-      `SELECT s.unit_of_measure, SUM(isv.quantity) AS quantity
-       FROM installation_services isv
-       JOIN services s ON s.id = isv.service_id
-       JOIN installations inst ON inst.id = isv.installation_id
+      `SELECT s.unit_of_measure, SUM(js.quantity) AS quantity
+       FROM job_services js
+       JOIN services s ON s.id = js.service_id
+       JOIN work_orders wo ON wo.id = js.work_order_id
        WHERE TRUE ${window}
        GROUP BY s.unit_of_measure
        ORDER BY s.unit_of_measure`,
@@ -258,10 +277,12 @@ router.get(
 
     const totals = await db.query(
       `SELECT COUNT(*)::int AS services_performed,
-              COUNT(DISTINCT isv.installation_id)::int AS visits,
-              COUNT(DISTINCT isv.service_id)::int AS distinct_services
-       FROM installation_services isv
-       JOIN installations inst ON inst.id = isv.installation_id
+              COUNT(DISTINCT js.work_order_id)::int AS visits,
+              COUNT(DISTINCT js.service_id)::int AS distinct_services,
+              SUM(js.quantity * js.unit_rate) AS value,
+              COUNT(*) FILTER (WHERE js.unit_rate IS NULL)::int AS unpriced_lines
+       FROM job_services js
+       JOIN work_orders wo ON wo.id = js.work_order_id
        WHERE TRUE ${window}`,
       [from, to]
     );
@@ -270,8 +291,132 @@ router.get(
       group_by: groupBy,
       from,
       to,
+      currency: 'KES',
       services: rows.rows,
       totals: { ...totals.rows[0], by_unit: byUnit.rows },
+    });
+  })
+);
+
+// GET /api/reports/job-costs?from&to&group_by=site|type|tech|month
+//
+// What the work cost, which is the question none of the other reports could
+// answer. /consumption counts stock movements and /services counts labour, and
+// neither of them knows about the fare that got the tech to the compound.
+//
+// Every bucket is reported separately rather than as one figure, because they
+// are four different kinds of spend and because any of them can be unpriced.
+// `unpriced_lines` is the honesty column: a total sitting next to a non-zero
+// count of unpriced lines is a floor, not a cost, and a dashboard that hides
+// that is worse than one showing no number at all.
+router.get(
+  '/job-costs',
+  asyncHandler(async (req, res) => {
+    const groupBy = req.query.group_by
+      ? oneOf(req.query.group_by, ['site', 'type', 'tech', 'month'], 'group_by')
+      : 'site';
+    const from = optionalDate(req.query.from, 'from');
+    const to = optionalDate(req.query.to, 'to');
+
+    const GROUPINGS = {
+      site: {
+        select: "coalesce(site.name, '(no site set)') AS label",
+        group: 'site.name',
+        order: 'total DESC',
+      },
+      type: { select: 'pj.type AS label', group: 'pj.type', order: 'total DESC' },
+      tech: {
+        select: "coalesce(u.name, '(unassigned)') AS label",
+        group: 'u.name',
+        order: 'total DESC',
+      },
+      month: {
+        select: "to_char(date_trunc('month', pj.work_day), 'YYYY-MM') AS label",
+        group: "date_trunc('month', pj.work_day)",
+        order: 'label',
+      },
+    };
+    const grouping = GROUPINGS[groupBy];
+
+    // One row per job first, then aggregate. Joining the three line tables
+    // straight into one GROUP BY would multiply every material line by the
+    // number of labour lines on the same job.
+    const result = await db.query(
+      `WITH per_job AS (
+         SELECT wo.id, wo.type, cp.site_id,
+                coalesce(wo.assigned_tech_id, wo.created_by) AS tech_id,
+                ${JOB_WORK_DAY} AS work_day,
+                (SELECT coalesce(SUM(jm.quantity * jm.unit_cost), 0)
+                   FROM job_materials jm WHERE jm.work_order_id = wo.id) AS materials,
+                (SELECT coalesce(SUM(js.quantity * js.unit_rate), 0)
+                   FROM job_services js WHERE js.work_order_id = wo.id) AS labour,
+                (SELECT coalesce(SUM(je.amount), 0)
+                   FROM job_expenses je WHERE je.work_order_id = wo.id) AS expenses,
+                (SELECT coalesce(SUM(i.unit_cost), 0)
+                   FROM installations inst
+                   JOIN item_instances ii ON ii.id = inst.item_instance_id
+                   JOIN items i ON i.id = ii.item_id
+                  WHERE inst.work_order_id = wo.id) AS hardware,
+                (SELECT COUNT(*) FROM job_materials jm
+                  WHERE jm.work_order_id = wo.id AND jm.unit_cost IS NULL)
+                + (SELECT COUNT(*) FROM job_services js
+                    WHERE js.work_order_id = wo.id AND js.unit_rate IS NULL)
+                + (SELECT COUNT(*) FROM installations inst
+                    JOIN item_instances ii ON ii.id = inst.item_instance_id
+                    JOIN items i ON i.id = ii.item_id
+                    WHERE inst.work_order_id = wo.id AND i.unit_cost IS NULL)
+                  AS unpriced_lines
+           FROM work_orders wo
+           JOIN customer_premises cp ON cp.id = wo.customer_premises_id
+          WHERE wo.status <> 'cancelled'
+            AND ($1::date IS NULL OR ${JOB_WORK_DAY} >= $1::date)
+            AND ($2::date IS NULL OR ${JOB_WORK_DAY} <= $2::date)
+       )
+       SELECT ${grouping.select},
+              COUNT(*)::int AS jobs,
+              SUM(pj.materials) AS materials_total,
+              SUM(pj.labour) AS labour_total,
+              SUM(pj.expenses) AS expenses_total,
+              SUM(pj.hardware) AS hardware_total,
+              SUM(pj.materials + pj.labour + pj.expenses + pj.hardware) AS total,
+              SUM(pj.unpriced_lines)::int AS unpriced_lines
+         FROM per_job pj
+         LEFT JOIN locations site ON site.id = pj.site_id
+         LEFT JOIN users u ON u.id = pj.tech_id
+        GROUP BY ${grouping.group}
+        ORDER BY ${grouping.order}`,
+      [from, to]
+    );
+
+    const rows = result.rows.map((row) => ({
+      ...row,
+      materials_total: round2(Number(row.materials_total)),
+      labour_total: round2(Number(row.labour_total)),
+      expenses_total: round2(Number(row.expenses_total)),
+      hardware_total: round2(Number(row.hardware_total)),
+      total: round2(Number(row.total)),
+      // What one job costs on average is the figure that gets quoted; leaving
+      // the client to divide two of these columns is how it gets quoted wrong.
+      average_per_job: row.jobs > 0 ? round2(Number(row.total) / row.jobs) : 0,
+    }));
+
+    const sum = (key) => round2(rows.reduce((total, row) => total + row[key], 0));
+
+    res.json({
+      group_by: groupBy,
+      from,
+      to,
+      currency: 'KES',
+      job_costs: rows,
+      totals: {
+        jobs: rows.reduce((total, row) => total + row.jobs, 0),
+        materials_total: sum('materials_total'),
+        labour_total: sum('labour_total'),
+        expenses_total: sum('expenses_total'),
+        hardware_total: sum('hardware_total'),
+        total: sum('total'),
+        unpriced_lines: rows.reduce((total, row) => total + row.unpriced_lines, 0),
+      },
     });
   })
 );

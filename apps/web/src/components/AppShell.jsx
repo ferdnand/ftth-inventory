@@ -8,7 +8,7 @@ const NAV = [
     title: 'Operations',
     links: [
       { to: '/', text: 'Overview', end: true },
-      { to: '/work-orders', text: 'Work orders' },
+      { to: '/work-orders', text: 'Jobs' },
       { to: '/premises', text: 'Premises' },
     ],
   },
@@ -36,6 +36,7 @@ const NAV = [
       { to: '/reports/tech-activity', text: 'Tech activity', roles: ['warehouse_staff', 'pm'] },
       { to: '/reports/installations', text: 'Installations', roles: ['warehouse_staff', 'pm'] },
       { to: '/reports/services', text: 'Services', roles: ['warehouse_staff', 'pm'] },
+      { to: '/reports/job-costs', text: 'Job costs', roles: ['warehouse_staff', 'pm'] },
     ],
   },
   {

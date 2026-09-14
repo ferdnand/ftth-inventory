@@ -2,6 +2,14 @@
 
 Reference for setting up, running, and extending this repo.
 
+The domain, in one paragraph: a fibre operator works two rural sites in Kenya,
+**Bungoma** and **Kisumu**. A field tech opens a **job**, capturing the premises
+by GPS if nobody has recorded it, and the job owns everything the visit produced
+— the unit fitted, the materials out of the van, the labour, and the money spent
+getting there. A manager may dispatch a job instead, but does not have to. The
+job, not the installation, is the unit of record; §5 says why that matters and
+what it replaced.
+
 The project is a three-app monorepo:
 
 | App | What it is | Who uses it |
@@ -207,7 +215,7 @@ Android also needs cleartext HTTP for a LAN dev API; `app.config.js` sets
 npm test             # from the repo root
 ```
 
-84 tests across four files, using `node:test` — zero dependencies, no build
+175 tests across eight files, using `node:test` — zero dependencies, no build
 step.
 
 They run against a **real PostgreSQL** database, because everything worth
@@ -240,6 +248,17 @@ What is covered, in rough order of importance:
 | Restock | Fulfilment moves the stock atomically, and fails as a whole if it cannot |
 | Reports | Low stock includes locations holding **zero** of an item |
 | Migrations | `up` is idempotent; an edited applied migration fails its checksum |
+| Jobs | A tech can open their own job, cannot dispatch to another tech, and sees only their own |
+| Job + premises | A job and a premises are created in one transaction, and an unfindable premises rolls the job back with it |
+| Materials | Recording draws stock down; re-sending the identical list moves nothing; a correction returns the difference to the van it came from |
+| Materials | A serialized item is refused as a material, by the route **and** by `trg_job_material_is_bulk` |
+| Costs | The total is the four buckets summed, and unpriced lines are counted rather than treated as free |
+| Costs | A line's own cost beats the catalog and survives a re-pricing |
+| Labour | A job that installs nothing can still record work — the case the old model could not express |
+| Premises | GPS alone is enough; nothing findable is refused by the route **and** by `premises_must_be_locatable` |
+| Premises | A tech may improve a GPS fix but not rename an address, and a fix cannot be cleared |
+| Search | A premises is found by name, village, landmark or a partial phone number |
+| Job ↔ premises | An installation cannot belong to a job at another premises, enforced by trigger |
 
 The clients have no test suite. They were verified by rendering every screen
 headlessly against a live seeded API — the dashboard through Vite's SSR
@@ -314,18 +333,84 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   nothing, so totals come back split by unit and the by-tech grouping reports
   counts with `quantity` explicitly NULL rather than a misleading number.
 
-- **Labour hangs off the installation, not the address.** `installation_services`
-  references `installations`, so replacing a router years later keeps each
-  visit's work separate — the same premises can be spliced twice and the
-  timeline shows both. It is the only `ON DELETE CASCADE` in the schema: these
-  rows describe one installation and mean nothing without it. The `service_id`
-  reference does *not* cascade — a service in use deactivates, it never deletes.
+- **Labour hangs off the job, not the installation and not the address.** 009
+  put it on `installations`, which meant a visit that fitted no hardware could
+  not record any — and a tech who drives out to re-splice a cut cable does real,
+  billable work and installs nothing. `013_job_costing.sql` moves it to
+  `job_services`. Replacing a router years later still keeps each visit's work
+  separate, because each visit is its own job; the premises timeline still shows
+  labour per installation, resolved through `installations.work_order_id`, so the
+  API shape the clients read did not change (`serviceLinesByInstallation` in
+  `src/lib/jobLines.js`).
 
-- **`PUT /api/installations/:id/services` takes the complete list.** Sending
-  `[]` clears it and re-sending the same list twice leaves the same rows, so a
-  tech on a bad connection can retry without an idempotency key. It exists
-  because the warehouse dashboard never *creates* an installation — installs
-  happen in the field — so without it the web UI could only read the work.
+- **`job_materials`, `job_services` and `job_expenses` are the only cascades in
+  the schema.** They describe one job and mean nothing without it. The
+  `service_id` and `item_id` references do *not* cascade — a service or item in
+  use deactivates, it never deletes.
+
+- **All three job-line routes take the complete list.** Sending `[]` clears it
+  and re-sending the same list twice leaves the same rows, so a tech on a bad
+  connection can retry without an idempotency key. `PUT
+  /api/installations/:id/services` is kept as the installation-addressed way in
+  to the same write, because "record the work on this router" is how the premises
+  screens are laid out.
+
+- **`PUT /api/work-orders/:id/materials` moves stock by the DIFFERENCE.** This is
+  the one place the complete-list rule does real work: the handler reads the
+  existing lines, works out a per-item delta, and moves only that. Raise a line
+  and the extra leaves the van; lower it and the difference goes back; drop it
+  and all of it does. Re-sending an identical list moves nothing, which is
+  exactly the retry case. A line records the location it was drawn from
+  (`job_materials.from_location_id`) rather than deriving it, so a correction
+  next week returns stock to the van that supplied it and not to whichever van
+  the tech drives by then.
+
+- **Consumption is booked as `install` and a correction as `return`.** A material
+  consumed on a job left the van and went into a customer premises, which is what
+  `install` means, and a premises is not a `location` so there is no destination.
+  `/api/reports/consumption` already counts `install`, so materials appear there
+  without a new movement type. A downward correction writes a compensating
+  `return`; over a period, consumption is installs minus returns, and the job
+  cost report reads `job_materials` directly rather than the trail.
+
+- **A rate is copied onto a line, never joined at read time.** `items.unit_cost`
+  and `services.unit_rate` are the price list; `job_materials.unit_cost` and
+  `job_services.unit_rate` are what was agreed on the day. Re-pricing the catalog
+  changes the next job and leaves past ones alone. Hardware is the exception —
+  `installations` carries no cost of its own, so it is priced from the catalog at
+  read time and named as its own bucket in the response so nobody mistakes it for
+  a figure agreed on the day.
+
+- **An unpriced line is counted, not treated as free.** Every cost response
+  carries `unpriced_lines`, and both clients render it next to the total. A total
+  with unpriced lines behind it is a floor, and showing it as the answer is worse
+  than showing no number at all.
+
+- **A premises does not need an address.** `premises_must_be_locatable` requires
+  an address *or* a landmark *or* a GPS pin. In the villages this serves streets
+  have no names and houses have no numbers, so the old `NOT NULL` on `address`
+  forced techs to invent one — and an invented address finds nothing. The
+  `search_text` generated column is what makes a premises findable by customer
+  name, phone, village or landmark, and the search route and the GIN index both
+  name that one column so they cannot drift apart.
+
+- **`premisesLabel` lives in the API.** Three clients need a title for a place
+  that may have no address, and computing it in each of them separately is how
+  two of them end up showing "Premises 41" for a house with a perfectly good
+  landmark. The API sends it as `label`.
+
+- **Any authenticated user may improve a GPS fix; only the warehouse may rename
+  an address.** A tech who saved a premises indoors on a 200 m fix and walks
+  outside to a 6 m one is correcting the single most useful field on the record,
+  and making them phone the warehouse means it never gets done. A fix can be
+  replaced, never cleared — something was installed against that record and the
+  pin is how anyone finds it again.
+
+- **A `DATE` is parsed as a string.** `src/lib/db.js` overrides pg's parser for
+  OID 1082. The default turns a calendar day into a JS `Date` at midnight UTC,
+  which serializes back out in Kenya (UTC+3) as the *previous* day — so a job
+  performed on the 10th reached both clients as the 9th and landed in the wrong
+  day's figures. This affects `work_orders.performed_on` and `scheduled_date`.
 
 - **The auth mount is load-bearing.** `app.use('/api', requireAuth)` sits above
   the domain routers in `src/app.js`. That ordering is what makes a newly added
@@ -356,8 +441,37 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   either take `item_instance_id` **or** `item_id` + `quantity`, never both, and
   `transaction_serialized_xor_bulk` enforces it.
 
-- **Work orders are optional everywhere.** Every `work_order_id` foreign key is
-  nullable. Do not make it required.
+- **The job is the record, and an installation cannot exist without one.** 001
+  described `work_orders` as an "optional layer", and that assumption is what
+  went wrong: it took a manager dispatching every visit, so a tech who simply
+  went and did the work had nowhere to record what it consumed.
+  `012_jobs.sql` backfills a job for every orphan installation and makes
+  `installations.work_order_id` `NOT NULL`. `POST /api/installations` opens a job
+  when the caller names none, so the old request shape still works and no longer
+  produces an install that belongs to nothing.
+
+  `transactions.work_order_id` and `restock_requests` links stay nullable — a
+  warehouse transfer belongs to no job.
+
+  A trigger (`installation_job_same_premises`) enforces that a job and its
+  installation are at the same premises. Two foreign keys to `customer_premises`
+  with nothing tying them together is how a job at one house ends up owning the
+  cable used at another.
+
+- **A field tech may open a job.** `POST /api/work-orders` is open to every role.
+  A tech-opened job is assigned to them whatever `assigned_tech_id` they send,
+  starts `in_progress`, and is dated today; a manager-dispatched one starts
+  `open` with no `performed_on` until the work is actually done. It also accepts
+  a `premises` object, creating the place and the job in one transaction — a tech
+  at an unrecorded compound gets one submit, and a dropped connection cannot
+  leave an address with no job against it.
+
+- **`performed_on` is the day the work was done.** Not `created_at`, which is
+  only when the phone found signal, and not `scheduled_date`, which is the plan.
+  Every cost and labour report windows on it, falling back to `completed_at` and
+  then `created_at` so a row can never drop out of every window. A tech may
+  correct it; that is deliberate, because recording Friday's work on Monday is
+  the normal case.
 
 - **`transactions` is append-only.** Every stock movement writes a row. Nothing
   updates or deletes from that table, and nothing should. This is also why
@@ -434,7 +548,17 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 007_services.sql  Billable labour, split out of items
 │   │   │   │   ├── 008_merge_sleeves.sql  Duplicate catalog row merged
 │   │   │   │   ├── 009_installation_services.sql  Labour ↔ installation
-│   │   │   │   └── 010_admin_role.sql  admin role + 'adjustment' movement
+│   │   │   │   ├── 010_admin_role.sql  admin role + 'adjustment' movement
+│   │   │   │   ├── 011_sites_and_premises_capture.sql
+│   │   │   │   │                   Bungoma + Kisumu as sites; a premises a tech
+│   │   │   │   │                   can capture by GPS, with no address
+│   │   │   │   ├── 012_jobs.sql    The job becomes the record: created_by,
+│   │   │   │   │                   performed_on, installations.work_order_id
+│   │   │   │   │                   NOT NULL (backfilled)
+│   │   │   │   └── 013_job_costing.sql
+│   │   │   │                       job_materials / job_services / job_expenses,
+│   │   │   │                       items.unit_cost, services.unit_rate.
+│   │   │   │                       installation_services folds into job_services
 │   │   │   ├── create-admin.js     Bootstrap/recover an admin (no API needed)
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
@@ -447,24 +571,32 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── validate.js     Hand-rolled 400 helpers
 │   │   │   │   ├── stock.js        applyMove — the non-negative rule
 │   │   │   │   ├── idempotency.js  Replay detection
-│   │   │   │   ├── installationServices.js  Labour lines: parse, write, read
+│   │   │   │   ├── jobLines.js     Materials, labour and expenses: parse,
+│   │   │   │   │                   write, read, and the cost roll-up
+│   │   │   │   ├── premises.js     Capture rules, the locatable check, and
+│   │   │   │   │                   premisesLabel (what to call a place)
 │   │   │   │   ├── constants.js    Enum arrays + per-role movement table
 │   │   │   │   └── serialize.js    publicUser — password_hash can never leak
 │   │   │   ├── middleware/auth.js  requireAuth, requireRole, location scoping
 │   │   │   └── routes/             auth, stock, premises, installations,
-│   │   │                           transactions, catalog, users,
+│   │   │                           transactions, catalog, users, jobs,
 │   │   │                           itemInstances, restockRequests, reports
-│   │   └── test/                   helpers.js + 6 *.test.js files
+│   │   └── test/                   helpers.js + 8 *.test.js files
+│   │                               (admin, auth, installations, jobs, labour,
+│   │                                premisesCapture, restock, stock)
 │   ├── web/
 │   │   └── src/
 │   │       ├── main.jsx  mount.jsx  router.jsx
 │   │       ├── styles/             tokens.css (from the mockup) · base · components
-│   │       ├── lib/                api · ApiError · num · format · constants
-│   │       │                       queryKeys · queryClient · groupSerialized
+│   │       ├── lib/                api · ApiError · num · format · money
+│   │       │                       constants · queryKeys · queryClient
+│   │       │                       groupSerialized
 │   │       ├── auth/               AuthProvider · AuthContext · tokenStore · routes
 │   │       ├── components/         AppShell · DataTable · Meter · Badge · Toast
 │   │       │                       Modal · fields · states · PageHeader
 │   │       │                       InstallationServices (summary + editor)
+│   │       │                       JobLines (cost card + the three editors)
+│   │       │                       PremisesFields (shared capture form)
 │   │       ├── charts/             chartTheme · ChartFrame · marks · LazyMarks
 │   │       ├── hooks/              useData (queries + mutations) · useDebounced
 │   │       └── pages/              login · overview · items · services · locations
@@ -474,15 +606,24 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │       ├── app/                    expo-router file routes
 │       │   ├── _layout.jsx         fonts, providers, auth gate
 │       │   ├── login.jsx  profile.jsx  restock.jsx  +not-found.jsx
-│       │   ├── (tabs)/             _layout · stock · install · history
+│       │   ├── (tabs)/             _layout · jobs · stock · history
+│       │   ├── jobs/               new.jsx  (start a job, capturing the
+│       │   │                       premises inline if it is not on record)
+│       │   │                       [id].jsx  (the job: router, materials,
+│       │   │                       work, costs, complete)
+│       │   │                       [id]/materials · [id]/work · [id]/expenses
 │       │   └── premises/           [id].jsx · new.jsx · [id]/install · [id]/replace
 │       │                           [id]/work  (amend recorded labour)
 │       ├── src/
 │       │   ├── theme.js            The mockup's tokens, ported
-│       │   ├── lib/                config (LAN host) · format · constants · groupSerialized
+│       │   ├── lib/                config (LAN host) · format · money
+│       │   │                       constants · groupSerialized
 │       │   ├── api/                client · queries
 │       │   ├── auth/               AuthProvider · tokenStore (SecureStore)
 │       │   └── components/         ui · Screen · fields · SerialPicker
+│       │                           ServicePicker · MaterialPicker
+│       │                           ExpenseEditor · CostSummary
+│       │                           GpsField · PremisesForm
 │       ├── app.config.js  babel.config.js  metro.config.js
 ├── mockups/
 │   └── mobile_screens.html         The design source of truth. Lines 9-22 are
@@ -594,6 +735,37 @@ Recorded here so they are not rediscovered.
   a tech gets is the warehouse's choice at fulfilment time, so the API refuses a
   serialized line — the warehouse issues those with a normal transfer.
 - Reports have no export. Everything is on screen or behind a chart's table view.
+- **Job costs are costs, not billing.** There is no invoice, no customer-facing
+  total, no tax and no margin. `job_expenses` records what a tech spent; there is
+  no reimbursement or approval flow behind it, so a fare recorded here is a cost
+  the business now knows about, not a claim anybody has paid.
+- **Currency is KES throughout, and not configurable.** Every money column is
+  `NUMERIC(12,2)` and the responses carry `currency: 'KES'` so a client never
+  guesses. A second currency would need a column, not a find-and-replace.
+- **Editing materials on a job moves stock immediately, whatever the job's
+  status.** Only cancelling a job freezes its lines. A cost remembered on the
+  drive home has to have somewhere to go, so a completed job stays editable —
+  which does mean a correction weeks later moves today's stock. Reconcile with
+  `POST /api/stock/adjustments` if that has drifted.
+- **`/api/reports/consumption` counts installs without subtracting the returns a
+  downward material correction writes.** Its subject is stock movement, and
+  changing that would change what every existing number on that report means.
+  `/api/reports/job-costs` reads `job_materials` directly and is the netted view.
+- **Sites are `locations` of type `site`, and there are two of them.** Bungoma
+  and Kisumu are inserted by `011_sites_and_premises_capture.sql`, not seeded, so
+  a deployed database has them. A third site is an `INSERT INTO locations`; the
+  `SITE_NAMES` arrays in the three `constants.js` files exist only so a client
+  can label one without a round trip. Nothing enforces that a premises has a
+  site — a compound captured in a hurry can be filed later.
+- **The GPS pin is a point, with no map.** Neither client renders a map or
+  navigates to a fix: the field app shows the coordinates and an accuracy
+  verdict, and the dashboard shows the numbers. A map tile layer is a network
+  dependency in places that have none, and the number is what a tech reads out
+  over a phone. `gps_accuracy_m` is recorded so a bad fix can be told from a
+  good one; nothing refuses a bad one, because a rough pin beats no pin.
+- **No geographic search.** "Premises near me" would need PostGIS or a bounding
+  box, and the fallback that exists — browse the site's list — is short enough at
+  two sites' worth of premises. `GET /api/premises?site_id=` caps at 500.
 - The dashboard is dark-only. PMs printing reports will want light: the
   CSS-variable structure makes that a later `[data-theme="light"]` block with no
   component changes, but **the chart palette must be re-selected for light, never

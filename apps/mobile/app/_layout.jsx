@@ -52,7 +52,7 @@ function AuthGate({ children }) {
     if (!isAuthenticated && !onLogin) {
       router.replace('/login');
     } else if (isAuthenticated && onLogin) {
-      router.replace('/(tabs)/stock');
+      router.replace('/(tabs)/jobs');
     }
   }, [isBootstrapping, isAuthenticated, segments, router]);
 

@@ -32,8 +32,12 @@ import { formatPremisesCode } from '../../../src/lib/format';
 import { label } from '../../../src/lib/constants';
 
 export default function InstallAtPremisesScreen() {
-  const { id } = useLocalSearchParams();
+  // `job` arrives when this screen was opened from a job that is already
+  // running, so the router lands on that job instead of opening a second one
+  // for the same visit.
+  const { id, job } = useLocalSearchParams();
   const premisesId = Number(id);
+  const fromJobId = job ? Number(job) : null;
   const router = useRouter();
   const { user } = useAuth();
 
@@ -45,7 +49,7 @@ export default function InstallAtPremisesScreen() {
   const install = useInstall();
 
   const [unit, setUnit] = useState(null);
-  const [workOrderId, setWorkOrderId] = useState(null);
+  const [workOrderId, setWorkOrderId] = useState(fromJobId);
   // { [serviceId]: { quantity, notes } } — see ServicePicker.
   const [work, setWork] = useState({});
   const [error, setError] = useState(null);
@@ -55,7 +59,7 @@ export default function InstallAtPremisesScreen() {
 
   if (history.isPending || stock.isPending) return <Loading label="Loading" />;
 
-  const address = history.data?.premises?.address ?? `Premises ${premisesId}`;
+  const address = history.data?.premises?.label ?? `Premises ${premisesId}`;
   const alreadyInstalled = current.data != null;
 
   async function onSubmit() {
@@ -68,7 +72,10 @@ export default function InstallAtPremisesScreen() {
         services: toServiceLines(work),
         idempotency_key: idempotencyKey,
       });
-      router.replace(`/premises/${premisesId}`);
+      // Back to the job, which is where the materials and the costs go. When
+      // the install opened its own job, the response says which.
+      const landing = fromJobId ?? workOrderId;
+      router.replace(landing ? `/jobs/${landing}` : `/premises/${premisesId}`);
     } catch (err) {
       setError(err);
     }
@@ -108,7 +115,14 @@ export default function InstallAtPremisesScreen() {
             </PrimaryButton>
           ) : null}
 
-          {jobs.data?.length > 0 ? (
+          {fromJobId ? (
+            <>
+              <SectionLabel>Job</SectionLabel>
+              <EmptyState title={`Job #${fromJobId}`}>
+                This install will be recorded against the job you came from.
+              </EmptyState>
+            </>
+          ) : jobs.data?.length > 0 ? (
             <>
               <SectionLabel>Link to a job (optional)</SectionLabel>
               <View style={styles.pillRow}>
@@ -137,6 +151,9 @@ export default function InstallAtPremisesScreen() {
 
           <SectionLabel>Work performed (optional)</SectionLabel>
           <ServicePicker services={services.data ?? []} value={work} onChange={setWork} />
+          <Text style={styles.hint}>
+            Materials and other costs are recorded on the job screen after this.
+          </Text>
 
           {unit ? (
             <>

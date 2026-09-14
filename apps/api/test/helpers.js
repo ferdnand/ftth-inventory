@@ -43,7 +43,9 @@ const { up } = require('../db/migrate');
 // Order matters: children before parents.
 const TABLES = [
   'transactions',
-  'installation_services',
+  'job_materials',
+  'job_services',
+  'job_expenses',
   'installations',
   'restock_request_lines',
   'restock_requests',
@@ -68,6 +70,19 @@ async function migrateOnce() {
 async function reset() {
   await migrateOnce();
   await db.query(`TRUNCATE ${TABLES.join(', ')} RESTART IDENTITY CASCADE`);
+  await seedSites();
+}
+
+// Bungoma and Kisumu are reference data, inserted by
+// 011_sites_and_premises_capture.sql — and TRUNCATE takes them out with every
+// other location. Put them back, so a test can ask for a site by name the way
+// a deployed database can.
+async function seedSites() {
+  await db.query(`
+    INSERT INTO locations (name, type, address) VALUES
+      ('Bungoma', 'site', 'Bungoma County'),
+      ('Kisumu',  'site', 'Kisumu County')
+  `);
 }
 
 async function close() {
@@ -108,22 +123,24 @@ async function createItem({
   trackingType = 'serialized',
   unitOfMeasure = 'unit',
   reorderThreshold = null,
+  unitCost = null,
 }) {
   const result = await db.query(
-    `INSERT INTO items (name, category, tracking_type, unit_of_measure, reorder_threshold)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO items
+       (name, category, tracking_type, unit_of_measure, reorder_threshold, unit_cost)
+     VALUES ($1, $2, $3, $4, $5, $6)
      RETURNING *`,
-    [name, category, trackingType, unitOfMeasure, reorderThreshold]
+    [name, category, trackingType, unitOfMeasure, reorderThreshold, unitCost]
   );
   return result.rows[0];
 }
 
-async function createService({ name, unitOfMeasure = 'job', isActive = true }) {
+async function createService({ name, unitOfMeasure = 'job', isActive = true, unitRate = null }) {
   const result = await db.query(
-    `INSERT INTO services (name, unit_of_measure, is_active)
-     VALUES ($1, $2, $3)
+    `INSERT INTO services (name, unit_of_measure, is_active, unit_rate)
+     VALUES ($1, $2, $3, $4)
      RETURNING *`,
-    [name, unitOfMeasure, isActive]
+    [name, unitOfMeasure, isActive, unitRate]
   );
   return result.rows[0];
 }
@@ -157,12 +174,46 @@ async function getStock({ itemId, locationId }) {
   return result.rows[0] ? Number(result.rows[0].quantity) : null;
 }
 
-async function createPremises(address = '1 Test Road') {
+async function createPremises(fields = '1 Test Road') {
+  // A string is the common case ("just give me a premises"); an object is for
+  // the tests that care about GPS, a site or a village.
+  const body = typeof fields === 'string' ? { address: fields } : fields;
+  const columns = Object.keys(body);
   const result = await db.query(
-    'INSERT INTO customer_premises (address) VALUES ($1) RETURNING *',
-    [address]
+    `INSERT INTO customer_premises (${columns.join(', ')})
+     VALUES (${columns.map((_, i) => `$${i + 1}`).join(', ')})
+     RETURNING *`,
+    columns.map((c) => body[c])
   );
   return result.rows[0];
+}
+
+// Every installation belongs to a job since 012, so a test that writes an
+// installations row directly needs one of these first.
+async function createJob({
+  premisesId,
+  type = 'new_install',
+  status = 'in_progress',
+  techId = null,
+  createdBy = null,
+  performedOn = null,
+}) {
+  const result = await db.query(
+    `INSERT INTO work_orders
+       (customer_premises_id, type, status, assigned_tech_id, created_by, performed_on)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING *`,
+    [premisesId, type, status, techId, createdBy, performedOn]
+  );
+  return result.rows[0];
+}
+
+async function siteId(name) {
+  const result = await db.query(
+    `SELECT id FROM locations WHERE type = 'site' AND name = $1`,
+    [name]
+  );
+  return result.rows[0]?.id ?? null;
 }
 
 // A complete, minimal world: a warehouse, a van with a tech, a bulk item and a
@@ -278,6 +329,8 @@ module.exports = {
   createInstance,
   createService,
   createPremises,
+  createJob,
+  siteId,
   setStock,
   getStock,
   seedWorld,

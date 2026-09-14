@@ -14,28 +14,48 @@ conventions.
 
 ## What this system is for
 
-A fibre-to-the-home operator has technicians driving vans full of equipment to
-customer homes. Two things have to stay true:
+A fibre-to-the-home operator works two rural sites in Kenya, **Bungoma** and
+**Kisumu**, with technicians driving vans full of equipment to customer
+compounds. Three things have to stay true:
 
 1. **Where is every piece of equipment right now?** Some equipment is
    serialized and tracked one unit at a time (ONTs, media converters — each has
    a serial number and MAC address). Some is bulk and tracked by quantity
    (drop cable in metres, connectors, heat-shrink sleeves).
-2. **What is the history at each customer address?** Which router is installed
-   there today, which ones were there before, why each was removed, and how many
-   times it has been replaced.
+2. **What happened on each visit, and what did it cost?** A visit is a **job**.
+   The job owns the unit fitted, the materials out of the van, the labour, and
+   the money spent getting there — fares included. A manager may dispatch a job,
+   but usually does not: most of the work here is found, not ticketed, so the
+   tech opens their own.
+3. **What is the history at each premises?** Which router is installed there
+   today, which ones were there before, why each was removed, and how many times
+   it has been replaced.
+
+Two things about a premises are worth saying up front, because they shape the
+whole app:
+
+- **It may not exist before the tech gets there.** A tech arrives, finds a
+  household nobody has recorded, and captures it on the spot — in the same
+  submit that opens the job, so a dropped connection cannot leave an address
+  with no job against it.
+- **It may have no address.** Out here streets have no names and houses have no
+  numbers, and most premises are a single household in its own compound. What
+  gets somebody back to the same gate is a **GPS pin**, then a landmark, then the
+  customer's name and phone. So the rule is not "has an address" — it is "can be
+  found again", and a pin satisfies it.
 
 Serialized units live in `item_instances`; bulk quantities live in
 `stock_levels`. Every movement of either writes a row to `transactions`, which is
-append-only.
+append-only. What a job used and cost lives in `job_materials`, `job_services`
+and `job_expenses`, all hanging off the job.
 
 Three apps sit on top of that:
 
 - **`apps/api`** — the REST API and the database. All the rules live here.
-- **`apps/web`** — the warehouse dashboard. Receiving, transfers, work orders,
-  the restock queue, user admin and reporting.
-- **`apps/mobile`** — the field tech's phone app. Their van's stock, and
-  installing or replacing a router at a customer address.
+- **`apps/web`** — the warehouse dashboard. Receiving, transfers, jobs and their
+  costs, the restock queue, user admin and reporting.
+- **`apps/mobile`** — the field tech's phone app. Their jobs, their van's stock,
+  and everything a visit produced.
 
 ---
 
@@ -74,7 +94,11 @@ Applying 006_catalog_items.sql ... ok
 Applying 007_services.sql ... ok
 Applying 008_merge_sleeves.sql ... ok
 Applying 009_installation_services.sql ... ok
-Applied 9 migration(s).
+Applying 010_admin_role.sql ... ok
+Applying 011_sites_and_premises_capture.sql ... ok
+Applying 012_jobs.sql ... ok
+Applying 013_job_costing.sql ... ok
+Applied 13 migration(s).
 ```
 
 This works the same in PowerShell, cmd.exe and bash. Run it again and it says
@@ -92,17 +116,23 @@ npm run seed
 
 ```
 Seeded users: 6
-Seeded locations
+Seeded locations, alongside sites: Bungoma, Kisumu
 Seeded items: 6
+Seeded services: 3
 Seeded item instances: 2
 Seeded stock levels
-Seeded premises: 1
-Seeded active installation at premises 1
+Seeded premises: 3
+Seeded a completed job with materials, labour and expenses: 1
 
 --- Reference IDs for smoke testing ---
-warehouse_location_id: 1
-van_location_id: 2
-premises_id: 1
+warehouse_location_id: 3
+van_location_id: 4
+bungoma_site_id: 1
+kisumu_site_id: 2
+addressed_premises_id: 1
+gps_only_premises_id: 2
+completed_job_id: 1
+open_job_id: 2
 john_kamau_user_id: 1
 new_ont_instance_id (in van, ready to install): 1
 
@@ -113,6 +143,21 @@ project manager:  peter.mwangi@ftth.local
 administrator:    alice.wambui@ftth.local
 password (all):   ftth-dev-password
 ```
+
+Bungoma and Kisumu are **not** seeded — they are inserted by
+`011_sites_and_premises_capture.sql`, because they are operational reference data
+rather than a development fixture. A deployed database has them without ever
+running the seed.
+
+The three seeded premises are three shapes on purpose, because all three are
+real: one with a street address, one household found only by a GPS pin and a
+landmark (which is what most of Bungoma and Kisumu actually looks like), and one
+business captured with a phone number and no address.
+
+Job 1 is completed and carries everything a job can: the router fitted, 65 m of
+cable and some sleeves, a splice and a cable run, and a 400-shilling fare. It
+comes to **KES 7,285**, and it is what the cost report reads. Job 2 is open and
+dispatched to John, so the field app's job list has something in it.
 
 Note the four accounts — the rest of this tutorial switches between them,
 because **who you are signed in as changes what you can do.**
@@ -359,22 +404,106 @@ curl -s "localhost:4000/api/stock?location_id=1" -H "Authorization: Bearer $TECH
 
 ---
 
-## Part 5 — Install a router
+## Part 5 — A job, from arriving to done
 
-**Install** tab. Your open jobs are listed at the top; below that, a search box.
+The **Jobs** tab is the app's home screen, and it leads with **Start a job**
+rather than a search box. That is the whole shape of the change: the manager does
+not ticket every visit, so the tech opens their own. Anything a manager *did*
+dispatch appears in the same list, tagged **Sent to you** — to the tech they are
+the same thing.
 
-Search matches the street address **or** the customer account reference, so both
-`Ngong` and `KE-77291` find the same row. Under two characters it shows a hint,
-not "no results" — the API deliberately answers `{"results": []}` with a 200
-there, and rendering that as an empty state would be wrong.
+Below the job list is a search box. It matches the customer's name, the village,
+the landmark, a phone number, an address or an account reference — whichever
+fragment the tech was given on the phone, which is rarely an address. Under two
+characters it shows a hint, not "no results": the API deliberately answers
+`{"results": []}` with a 200 there, and rendering that as an empty state would be
+wrong.
 
 You can also type `PREM-00001`. That code is a display format computed from the
 premises id; it is never sent to the API, but the search box accepts it so a tech
 can type what is on a dispatch note.
 
+### 5.1 Starting a job at a place nobody has recorded
+
+**Start a job** asks two things: what kind of job, and where. "Where" has three
+answers, in the order they are actually useful here:
+
+- **Pick from site** — scroll the premises already recorded at Bungoma or
+  Kisumu. This exists because a compound saved as a GPS pin and a landmark has
+  nothing anyone would think to type into a search box.
+- **Search** — the same search as above, narrowed to one site.
+- **New premises** — capture it now.
+
+The capture form leads with **Use my location**, because that is the field that
+always works. It takes one fix on demand — no background tracking — and grades
+it: under 20 m is a *Good fix*, under 50 m a *Rough fix*, worse than that *Too
+rough*, with a nudge to step into the open and tap again. A rough pin is still
+saved, because a rough pin beats no pin.
+
+Then the customer's name and phone, the village, the landmark, and the kind of
+premises (a single household in its own compound is the default, because it is
+the common case). The address is last and optional.
+
+One submit creates both the premises and the job, in one transaction:
+
+```bash
+curl -s localhost:4000/api/work-orders \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"type": "new_install",
+       "premises": {"customer_name": "Nekesa Wanyonyi",
+                    "customer_phone": "0733123456",
+                    "village": "Nasianda",
+                    "landmark": "Third compound past the borehole",
+                    "site_id": 1,
+                    "gps_lat": 0.5635, "gps_lng": 34.5606, "gps_accuracy_m": 8}}'
+```
+
+```json
+{ "work_order": { "id": 3, "status": "in_progress", "performed_on": "2026-09-10",
+                  "label": "Third compound past the borehole, Nasianda",
+                  "site_name": "Bungoma", "customer_premises_id": 4 } }
+```
+
+Three things in that response are worth noticing:
+
+- **`status` is `in_progress`, not `open`.** A tech-opened job exists because
+  they are standing there. A manager-dispatched one starts `open` with no
+  `performed_on` until somebody goes.
+- **`performed_on` is today.** It is the day the work was *done*, which is not
+  the day it reached the server — a tech recording Friday's job on Monday is
+  normal, and every cost report windows on this date, so the tech can correct it.
+- **`label` is what to call the place.** There is no address, so the API falls
+  back through landmark → customer name → the pin, and qualifies it with the
+  village. It sends the label so three clients cannot disagree about it.
+
+Try it with nothing findable and both the premises and the job are refused
+together:
+
+```bash
+curl -s localhost:4000/api/work-orders \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"type": "repair", "premises": {"customer_name": "No idea where"}}'
+```
+
+```json
+{ "error": "A premises has to be findable again: give an address, a landmark, or a GPS fix" }
+```
+
+That sentence comes from the app; `premises_must_be_locatable` in the database is
+the guarantee behind it.
+
+### 5.2 The job screen
+
+Opening the job gives one screen with everything on it: the premises (with the
+pin and a link to improve it), the router, **Materials**, **Work done**, **Other
+costs**, a running total, and **Mark the job done**.
+
+The router row goes to the same install screen the rest of this part describes,
+carrying the job along so the hardware lands on it.
+
 Tap the result → the site history screen → **Install router**.
 
-### The serial field is a filter, not free text
+### 5.3 Fitting the router: the serial field is a filter, not free text
 
 The mockup shows typed "serial number" and "MAC address" inputs. The API needs an
 `item_instance_id`, and nothing turns an arbitrary typed serial into one. So the
@@ -386,7 +515,7 @@ Same interaction as the mockup, honest about the rule underneath: **you can only
 install a unit you are actually carrying.** That is also the correct
 authorization posture.
 
-### Recording the work, not just the hardware
+### 5.4 Recording the work, not just the hardware
 
 Under the unit picker is **Work performed (optional)** — the services catalog
 the warehouse maintains under **Catalog → Services** on the dashboard. Tap a
@@ -418,7 +547,26 @@ A tech may only amend an installation they performed, and only while it is still
 the active one. Correcting a visit that has since been replaced is a warehouse
 job — closed history should not move under a report's feet.
 
-### The 409 is a first-class path
+`PUT /api/installations/:id/services` and `PUT /api/work-orders/:id/services` are
+the same write reached from two directions. Use the job one when the visit fitted
+no hardware at all, which is the case the old model could not express:
+
+```bash
+# A tech drives out, re-splices a cut cable, and installs nothing.
+curl -s localhost:4000/api/work-orders \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"type": "repair", "customer_premises_id": 4}'
+
+curl -s -X PUT localhost:4000/api/work-orders/5/services \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"services": [{"service_id": 1}]}'
+```
+
+```json
+{ "costs": { "labour_total": 500, "hardware_total": 0, "total": 500 } }
+```
+
+### 5.5 The 409 is a first-class path
 
 Premises 1 already has an active router from the seed, so the install screen
 tells you so and offers **Replace it instead**. Over curl:
@@ -446,6 +594,102 @@ Two more guards worth trying:
 # A unit in the warehouse rather than your van
 # {"error":"Serial HW8245Q2-A001 is not in your van"}
 ```
+
+### 5.6 The materials — this is the one that moves stock
+
+**Materials** on the job screen lists your van's bulk stock, with what is on hand
+against each row and the price per unit. Tap one, type how much you used.
+
+```bash
+curl -s -X PUT localhost:4000/api/work-orders/3/materials \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"materials": [{"item_id": 4, "quantity": 55},
+                     {"item_id": 5, "quantity": 3}]}'
+```
+
+The van had 180 m of drop cable; it now has 125. The list you send is the
+**complete** list, not an addition, and the API moves stock by the *difference*
+between what was there and what you sent. Three things follow from that, and all
+three are worth trying:
+
+```bash
+# Send the identical list again. Nothing moves — the difference is zero.
+# This is why none of these routes needs an idempotency key: a second tap on a
+# dying connection is a no-op, not a double entry.
+
+# Correct 55 down to 40. Fifteen metres come back into the van.
+curl -s -X PUT localhost:4000/api/work-orders/3/materials \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"materials": [{"item_id": 4, "quantity": 40}, {"item_id": 5, "quantity": 3}]}'
+
+# Drop a line entirely and all of it comes back.
+```
+
+The picker's arithmetic follows the same rule: what you may claim is the van's
+balance **plus** whatever this job already took out of it, so a line recorded at
+55 can be corrected up to 195 even though the van only shows 125 on hand.
+
+A router is not a material — it is traced to the premises by serial through the
+installation, so counting it here would double it in the cost total:
+
+```bash
+curl -s -X PUT localhost:4000/api/work-orders/3/materials \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"materials": [{"item_id": 1, "quantity": 1}]}'
+```
+
+```json
+{ "error": "ONT HG8245Q2 is serialized — record it by installing the unit, not as a material" }
+```
+
+App-level, and backed by `trg_job_material_is_bulk` in the database.
+
+### 5.7 The fare, and what the job cost
+
+**Other costs** is for the money that is neither stock nor labour. Transport is
+why it exists: a compound an hour off the road costs a fare each way, the tech
+pays it, and before this there was nowhere to say so. Two fares on one job are
+two rows, not a double entry — there is deliberately no uniqueness rule on the
+category.
+
+```bash
+curl -s -X PUT localhost:4000/api/work-orders/3/expenses \
+  -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
+  -d '{"expenses": [{"category": "transport", "amount": 250, "description": "Boda out"},
+                    {"category": "transport", "amount": 250, "description": "Boda back"}]}'
+```
+
+Now read the whole job back:
+
+```bash
+curl -s localhost:4000/api/work-orders/3 -H "Authorization: Bearer $TECH"
+```
+
+```json
+{ "costs": { "currency": "KES",
+             "materials_total": 925,
+             "labour_total": 1100,
+             "expenses_total": 500,
+             "hardware_total": 4200,
+             "total": 6725,
+             "unpriced_lines": 0 } }
+```
+
+Four buckets, never one number, because they are four different kinds of spend.
+`unpriced_lines` is the honesty column: if an item or a service has no price set,
+its line contributes nothing to the total and gets counted here instead, and both
+clients say so next to the figure. **A total with unpriced lines behind it is a
+floor, not a cost.** Set prices under **Catalog → Items** (`unit_cost`) and
+**Catalog → Services** (`unit_rate`).
+
+A rate is *copied* onto the line when the work is recorded, not joined at read
+time — so re-pricing the catalog next quarter changes what the next job costs and
+leaves this one exactly as it was. Hardware is the exception: `installations`
+carries no cost of its own, so it is priced from the catalog when you read it,
+which is why it is named as its own bucket.
+
+**Mark the job done** finishes it. A completed job still accepts a cost you
+remembered on the drive home — only *cancelling* a job freezes its lines.
 
 ---
 
@@ -576,31 +820,71 @@ request stays open for a partial one.
 
 ---
 
-## Part 9 — Work orders
+## Part 9 — Jobs from the manager's side
 
-Work orders are an entirely optional layer. Every `work_order_id` foreign key is
-nullable — installs and stock movements work with or without one.
+A job is no longer an optional layer over an install. Every installation belongs
+to one, and `POST /api/installations` opens a job when the caller names none — so
+an install that belongs to nothing is not a state the system can reach. What
+stays optional is the *dispatching*: a manager may create a job for a tech, and
+usually does not.
 
-Create one from **Work orders → New work order**, then open it. The detail page
-has a status stepper (open → in progress → completed, plus cancel), a tech
-reassignment control, and a "Parts used on this job" table fed by
-`GET /api/transactions?work_order_id=`.
+**Work orders → New work order** creates one. Choose the premises, the type, the
+tech and a date; it starts `open` with no `performed_on`, because nobody has been
+yet. Then open it.
 
-A completed or cancelled job is terminal — reopening one would make
+The job list carries a **Cost** column (`?with_costs=true`, opt-in because the
+roll-up is four aggregates per job) and a **Work done** date, which is
+`performed_on` rather than the schedule.
+
+The detail page is the back office for a phone. Alongside the status stepper and
+the tech reassignment control it now has:
+
+- **The premises**, including the pin and whether there is one. A job whose
+  premises has no GPS says so in as many words: nobody can find that place from
+  the record alone.
+- **Hardware fitted**, with what the unit cost.
+- **Materials used / Work performed / Other costs**, each as a table with the
+  per-line rate and total, each with a **Correct** button. This is where a cable
+  length typed wrong on a phone gets fixed, and where a manager prices up a job
+  whose catalog entries had no rate on the day.
+- **What the job cost** — the four buckets and the total, with the unpriced-line
+  warning if any line carries no price.
+- **Stock movements behind this job**, fed by
+  `GET /api/transactions?work_order_id=`. A downward material correction shows up
+  here as a `return`, because the trail is append-only and a correction is a
+  movement in its own right.
+- **Day the work was done**, editable. Every cost report buckets on it, and the
+  tech is often recording Friday's work on Monday.
+
+Correcting materials from the dashboard moves stock exactly as it does from the
+phone, so a new line has to say where it comes from — warehouse staff have no van
+of their own to default to. Lines that already exist keep whatever stock they
+were first drawn from, so the difference goes back to the van that supplied it
+and not to whichever van the tech drives by then.
+
+A completed or cancelled job is terminal for *status* — reopening one would make
 `completed_at` meaningless, so the API refuses:
 
 ```json
-{ "error": "A completed work order can only move to: " }
+{ "error": "A completed job cannot change status" }
 ```
 
-A tech may progress their own job but not reassign or reschedule it, and cannot
-touch a job assigned to someone else.
+Its *lines* are a different matter. A completed job still accepts a cost
+remembered afterwards; only a cancelled one is frozen:
+
+```json
+{ "error": "This job was cancelled — reopen it as a new job to record work against it" }
+```
+
+A tech may progress their own job, annotate it and correct the day they did it,
+but not reassign or reschedule it, and cannot touch a job assigned to someone
+else.
 
 ---
 
 ## Part 10 — Reporting
 
-Four report pages, all warehouse-staff-or-manager only. A tech gets a 403 from
+Six report pages, all warehouse-staff-or-manager only. A tech gets a 403 from
 `/api/reports/*`, and the dashboard shows them their van instead of a wall of
 errors.
 
@@ -653,9 +937,12 @@ make "consumed" mean two different things in one number.
 
 Two things this report is careful about:
 
-- **The date is when the work was done**, taken from `installations.installed_at`,
-  not when someone typed it in. A tech recording Friday's splice on Monday still
-  lands in Friday.
+- **The date is when the work was done**, taken from
+  `work_orders.performed_on`, not when someone typed it in. A tech recording
+  Friday's splice on Monday still lands in Friday.
+- **Labour hangs off the job, not the installation.** That is what lets a visit
+  which fitted no hardware count here at all — a re-splice of a cut cable is
+  billable work, and under the old model it was invisible.
 - **Quantities are never summed across units.** 40 m of cable run plus one splice
   is not 41 of anything, so the totals tile reads `412 m · 37 jobs`. Grouped by
   tech, quantity is omitted entirely and the count of services performed is
@@ -664,6 +951,45 @@ Two things this report is careful about:
 ```bash
 curl -s "localhost:4000/api/reports/services?group_by=service&from=2026-01-01"   -H "Authorization: Bearer $TOKEN"
 ```
+
+### Job costs
+
+The question none of the other reports could answer: **what does a connection
+cost?** `/consumption` counts stock leaving the business and `/services` counts
+labour, and neither of them knows about the fare that got the tech to the
+compound. This one reads the job's own lines, which is where all three live.
+
+```bash
+curl -s "localhost:4000/api/reports/job-costs?group_by=site" \
+  -H "Authorization: Bearer $STAFF"
+```
+
+```json
+{ "currency": "KES",
+  "job_costs": [
+    { "label": "Bungoma", "jobs": 5, "materials_total": 2535, "labour_total": 3075,
+      "expenses_total": 900, "hardware_total": 12200, "total": 18710,
+      "average_per_job": 3742, "unpriced_lines": 0 }
+  ],
+  "totals": { "jobs": 5, "total": 18710, "unpriced_lines": 0 } }
+```
+
+Group by `site`, `type`, `tech` or `month`. The chart stacks the four buckets so
+one bar answers both "how much" and "of what" at once.
+
+Three things it does deliberately:
+
+- **Windows on the day the work was done**, falling back to the completion date
+  and then to when the ticket was opened, so a job can never drop out of every
+  window.
+- **Excludes cancelled jobs.** A cancelled visit did not happen.
+- **Reports `unpriced_lines` next to the totals**, and the page puts a banner
+  above them when it is non-zero. Presenting a floor as the answer is worse than
+  presenting no number.
+
+`average_per_job` is computed server-side rather than left to the client to
+divide two columns — that is the figure that gets quoted, so it is the figure
+that should not be got wrong twice.
 
 Every chart has a **Table** toggle, so no value is only reachable by hovering.
 Filter state lives in the URL, so a report is a link you can send someone.
@@ -843,15 +1169,25 @@ happens anyway, `npm run create-admin -w apps/api` on the server is the way back
 | Find a unit by serial | dashboard | `GET /api/item-instances?serial=` |
 | See what a location holds | dashboard → Locations | `GET /api/stock?location_id=` |
 | See per-model counts | mobile Stock tab | `GET /api/stock/summary?location_id=` |
-| Find a customer address | either | `GET /api/premises/search?q=` |
-| Add a customer address | either | `POST /api/premises` |
+| Find a premises | either | `GET /api/premises/search?q=&site_id=` |
+| Browse a site's premises | either | `GET /api/premises?site_id=` |
+| Add a premises | either | `POST /api/premises` |
+| Improve a premises' GPS pin | mobile → job or premises | `PATCH /api/premises/:id` |
 | See what is installed somewhere | either | `GET /api/premises/:id/current` |
 | See a site's full history | either | `GET /api/premises/:id/history` |
+| Start a job | mobile → Jobs → Start a job | `POST /api/work-orders` |
+| Start a job at a place not on record | mobile → New premises | `POST /api/work-orders` with `premises` |
 | Install a router | mobile | `POST /api/installations` |
 | Replace a router | mobile | `POST /api/installations/:premisesId/replace` |
+| Record materials used on a job | mobile → job → Materials | `PUT /api/work-orders/:id/materials` |
+| Record the labour on a job | mobile → job → Work done | `PUT /api/work-orders/:id/services` |
+| Record a fare or other cost | mobile → job → Other costs | `PUT /api/work-orders/:id/expenses` |
+| See what a job cost | either | `GET /api/work-orders/:id` |
 | Ask for more van stock | mobile → Restock | `POST /api/restock-requests` |
 | Fulfil a restock request | dashboard → Restock queue | `PATCH /api/restock-requests/:id` |
-| Progress a job | either | `PATCH /api/work-orders/:id` |
+| Progress or complete a job | either | `PATCH /api/work-orders/:id` |
+| Say which day a job was done | either | `PATCH /api/work-orders/:id` (`performed_on`) |
+| Price an item or a service | dashboard → Catalog | `PATCH /api/items/:id` · `PATCH /api/services/:id` |
 | Add a user / assign a van | dashboard → Users (PM only) | `POST` / `PATCH /api/users` |
 | Rename a location / reassign a van | dashboard → Locations → Edit | `PATCH /api/locations/:id` |
 | Fix a customer address | dashboard → Premises → Edit premises | `PATCH /api/premises/:id` |
@@ -860,8 +1196,9 @@ happens anyway, `npm run create-admin -w apps/api` on the server is the way back
 | Correct the date on an install | admin, over the API | `PATCH /api/installations/:id` |
 | Create the first admin | the server's shell | `npm run create-admin -w apps/api` |
 | See what needs reordering | dashboard → Reports | `GET /api/reports/low-stock` |
-| Record work done on a visit | mobile → install / Record work | `PUT /api/installations/:id/services` |
+| Record work against one installation | mobile → premises → Record work | `PUT /api/installations/:id/services` |
 | See labour billed this month | dashboard → Reports → Services | `GET /api/reports/services` |
+| See what the work cost | dashboard → Reports → Job costs | `GET /api/reports/job-costs` |
 
 ---
 
@@ -888,6 +1225,14 @@ happens anyway, `npm run create-admin -w apps/api` on the server is the way back
 | `That is the last active administrator` | Demoting the only admin | Give another user the admin role first |
 | `This action requires one of: admin` | Non-admin on a correction endpoint | Sign in as an admin, or `npm run create-admin -w apps/api` |
 | `removal_reason is required` | Replace without a reason | Pick one of the five |
+| `A premises has to be findable again` | No address, landmark or GPS pin | Take a fix, or give a landmark |
+| `gps_lat and gps_lng must be sent together` | Half a fix | Send both, or neither |
+| `A GPS fix cannot be cleared, only replaced` | Sending `gps_lat: null` on a premises that has one | Take a better fix instead |
+| `is serialized — record it by installing the unit` | A router sent as a job material | Install it: `POST /api/installations` |
+| `This job was cancelled` | Recording lines on a cancelled job | Open a new job for the visit |
+| `Field techs can only record materials out of their own van` | `from_location_id` is not the tech's van | Drop the field; a tech's van is the default |
+| A job total looks too low | Some lines have no price | `unpriced_lines` says how many. Set `unit_cost` / `unit_rate` under Catalog |
+| Location permission refused on the phone | The tech declined it | The premises can still be saved on a landmark; or allow location in phone settings |
 | `npm test` refuses to run | `TEST_DATABASE_URL` unset or same as `DATABASE_URL` | Create a separate test database |
 | Seed fails on duplicate key | Tables not empty | Truncate the data tables, or drop and recreate |
 
