@@ -12,6 +12,8 @@
     "dev:api": "npm run dev -w apps/api",
     "dev:web": "npm run dev -w apps/web",
     "dev:mobile": "npm run start -w apps/mobile",
+    "dev:pwa": "npm run web -w apps/mobile",
+    "build:pwa": "npm run build:pwa -w apps/mobile",
     "start:api": "npm start -w apps/api",
     "build:web": "npm run build -w apps/web",
     "migrate": "npm run migrate -w apps/api",

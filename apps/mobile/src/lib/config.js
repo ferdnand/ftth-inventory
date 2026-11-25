@@ -1,3 +1,4 @@
+import { Platform } from 'react-native';
 import Constants from 'expo-constants';
 
 // The single highest-probability time sink in a React Native project:
@@ -24,16 +25,36 @@ const derivedHost = metroHost();
 // PROCESS.md §3), so the derived URL must not hardcode it.
 const apiPort = process.env.EXPO_PUBLIC_API_PORT || '4000';
 
-export const API_BASE_URL =
-  process.env.EXPO_PUBLIC_API_URL ??
-  (derivedHost ? `http://${derivedHost}:${apiPort}/api` : `http://localhost:${apiPort}/api`);
+// On the web (the PWA) there is no Metro host in the config, but the page itself
+// is served from the dev machine, so its own hostname plays the same role. A
+// production web build is served from the API's own origin (or a proxy that
+// forwards /api to it), so a relative /api is right and survives a domain
+// change. Anything else sets EXPO_PUBLIC_API_URL when building.
+const isWeb = Platform.OS === 'web';
+const webDevHost = isWeb && __DEV__ ? globalThis.location?.hostname : null;
+
+function resolveApiBaseUrl() {
+  if (process.env.EXPO_PUBLIC_API_URL) return process.env.EXPO_PUBLIC_API_URL;
+  if (isWeb) {
+    return webDevHost ? `http://${webDevHost}:${apiPort}/api` : '/api';
+  }
+  return derivedHost
+    ? `http://${derivedHost}:${apiPort}/api`
+    : `http://localhost:${apiPort}/api`;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 // Shown on the profile screen. When the app cannot reach the API, this is the
 // first thing to look at — and the first debugging step is opening
 // <that host>/api/health in the PHONE's browser, not the laptop's.
 export const API_SOURCE = process.env.EXPO_PUBLIC_API_URL
   ? 'EXPO_PUBLIC_API_URL'
-  : derivedHost
+  : isWeb
+    ? webDevHost
+      ? 'derived from the page host'
+      : 'same origin as the app (/api)'
+    : derivedHost
     ? 'derived from the Metro host'
     : 'fallback (localhost — will not work on a physical device)';
 

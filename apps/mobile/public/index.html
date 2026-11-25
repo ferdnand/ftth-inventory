@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="%LANG_ISO_CODE%">
+  <head>
+    <meta charset="utf-8" />
+    <!-- viewport-fit=cover lets the app draw under the notch; the app pads for
+         it with safe-area insets. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>%WEB_TITLE%</title>
+
+    <!--
+      HTML shell for the web build (the PWA). Expo uses this file as the template
+      for `output: 'single'` and appends the script tags and theme-color itself.
+      Everything that makes the page installable is here: the manifest, the iOS
+      home-screen tags (iOS ignores the manifest's icons and display mode and
+      reads these instead), and the service-worker registration.
+    -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/png" href="/icon-192.png" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="FTTH Field" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+
+    <!-- The react-native-web recommended style reset. -->
+    <style id="expo-reset">
+      html,
+      body {
+        height: 100%;
+      }
+      /* The app scrolls inside its own ScrollViews, not the page. */
+      body {
+        overflow: hidden;
+        background-color: #f3f5f9;
+        overscroll-behavior: none;
+      }
+      #root {
+        display: flex;
+        height: 100%;
+        flex: 1;
+      }
+    </style>
+
+    <!-- Registered after load so it never competes with the first paint.
+         Browsers refuse service workers on plain http (except localhost), so the
+         check only avoids a console error. -->
+    <script>
+      if (
+        'serviceWorker' in navigator &&
+        (location.protocol === 'https:' || location.hostname === 'localhost')
+      ) {
+        window.addEventListener('load', function () {
+          navigator.serviceWorker.register('/sw.js').catch(function () {});
+        });
+      }
+    </script>
+  </head>
+
+  <body>
+    <noscript>You need to enable JavaScript to run this app.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

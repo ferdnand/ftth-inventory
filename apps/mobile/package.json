@@ -8,7 +8,10 @@
     "start": "expo start",
     "android": "expo start --android",
     "ios": "expo start --ios",
-    "doctor": "npx expo-doctor"
+    "doctor": "npx expo-doctor",
+    "web": "expo start --web",
+    "build:pwa": "expo export --platform web --output-dir dist",
+    "icons": "node scripts/generate-pwa-icons.js"
   },
   "dependencies": {
     "@expo-google-fonts/ibm-plex-mono": "^0.4.1",

@@ -30,7 +30,7 @@ The project is a three-app monorepo:
 | DB driver | `pg` (connection pool), no ORM |
 | Auth | JWT (`jsonwebtoken`) + `bcryptjs` |
 | Web | React 19, Vite 5, react-router-dom 6, TanStack Query 5, Recharts 3 |
-| Mobile | Expo SDK 58, expo-router, TanStack Query 5, expo-secure-store |
+| Mobile | Expo SDK 58, expo-router, TanStack Query 5, expo-secure-store; also builds as a PWA (react-native-web) |
 | Tests | `node:test` (API only), against a real Postgres |
 | Package manager | **npm workspaces** (`package-lock.json` is the lockfile — do not add `yarn.lock`) |
 | Language | Plain JavaScript everywhere. No TypeScript. |
@@ -198,6 +198,7 @@ own, since per §8 that is where the real errors go.
 npm run dev:api      # node --watch, restarts on change, :4000
 npm run dev:web      # Vite dev server, :5173, proxies /api to :4000
 npm run dev:mobile   # Expo — scan the QR code with Expo Go
+npm run dev:pwa      # the same app in a desktop browser, :8081 (see "The mobile app as a PWA")
 ```
 
 Health check — works with no database attached and needs no token:
@@ -259,6 +260,58 @@ If the app cannot reach the API:
 
 Android also needs cleartext HTTP for a LAN dev API; `app.config.js` sets
 `usesCleartextTraffic: true` for that reason.
+
+### The mobile app as a PWA
+
+`apps/mobile` also builds as an installable web app, so a tech can use it
+without Expo Go or an app store. It is the same code: `react-native-web` renders
+the same screens, and `tokenStore.js` already falls back to `localStorage` on
+web.
+
+```bash
+npm run dev:pwa     # Expo web dev server on :8081 — for development
+npm run build:pwa   # static export to apps/mobile/dist (git-ignored)
+```
+
+What makes it a PWA lives in `apps/mobile/public/` and is copied into the export
+as-is:
+
+| File | Purpose |
+|---|---|
+| `index.html` | The HTML shell. Expo uses it as the template for `web.output: 'single'` — **not** `app/+html.jsx`, which is ignored in that mode. Holds the manifest link, iOS home-screen tags and the service-worker registration. |
+| `manifest.webmanifest` | Name, colours, `display: standalone`, icons. |
+| `sw.js` | Service worker. Caches the app **shell** only (see below). |
+| `*.png` | Icons. Regenerate with `npm run icons -w @ftth/mobile` (no image library; it is a small script) and commit the output. |
+
+**Where the API comes from on web** (`src/lib/config.js`): `EXPO_PUBLIC_API_URL`
+if set; otherwise, in dev, the page's own hostname on `EXPO_PUBLIC_API_PORT`;
+otherwise a relative `/api`. A production build therefore expects the PWA and the
+API to share an origin. Either serve `dist/` from a reverse proxy that forwards
+`/api` to the API (and falls back to `index.html` for every other path — it is a
+single-page app), or build with `EXPO_PUBLIC_API_URL=https://api.example/api` and
+set `CORS_ORIGINS` on the API to the PWA's origin. `EXPO_PUBLIC_*` is read at
+build time, so changing it means re-running `build:pwa`.
+
+**HTTPS is not optional on a phone.** Browsers only register service workers,
+offer "Install app", and allow geolocation on a secure origin — `https://`, or
+`localhost`. `http://192.168.x.x:8081` from a phone on the LAN gets none of those:
+the app loads, but the GPS button ("Use my location") and installation do not
+work. To test on a real phone, put it behind HTTPS (a tunnel such as Cloudflare
+Tunnel or ngrok pointed at the dev server, or a deployed copy) — or, on Android
+Chrome only, add the LAN origin under `chrome://flags/#unsafely-treat-insecure-origin-as-secure`.
+
+**What the service worker does and does not do.** It makes the *shell* (HTML, JS,
+fonts, icons) load with no network. It does **not** make the app work offline:
+jobs, stock and every write still need the API, and `/api/*` is deliberately
+never cached — a cached response would show a tech stale stock as if it were
+current. Real offline use is the "Offline sync" item in §8 (Known gaps), and is unchanged by
+the PWA. Assets under `/_expo/` and `/assets/` are cache-first (Metro
+content-hashes their names); navigations are network-first, so a deploy is picked
+up the next time the app opens online.
+
+One behaviour that matters because of this: on launch the auth bootstrap only
+discards the stored token if the API *rejects* it (401/403). A network failure
+keeps the token, so opening the app in a dead spot does not sign the tech out.
 
 **Windows firewall.** If the phone's browser cannot open the health URL while
 the laptop's can, the usual cause is Windows blocking inbound connections:
@@ -757,6 +810,9 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │       │                           ServicePicker · MaterialPicker
 │       │                           ExpenseEditor · CostSummary
 │       │                           GpsField · PremisesForm
+│       ├── public/                 PWA: index.html (shell) · manifest.webmanifest
+│       │                           sw.js · icons (copied verbatim into dist/)
+│       ├── scripts/                generate-pwa-icons.js
 │       ├── app.config.js  babel.config.js  metro.config.js
 ├── mockups/
 │   └── mobile_screens.html         The design source of truth. Lines 9-22 are
@@ -850,7 +906,9 @@ Recorded here so they are not rediscovered.
   third-party scripts on the dashboard. Keep it that way.
 - **On web, the mobile app falls back to `localStorage`** because
   `expo-secure-store` is native-only. Native builds use the Keychain /
-  EncryptedSharedPreferences.
+  EncryptedSharedPreferences. The PWA therefore has the dashboard's (weaker)
+  token storage: keep `JWT_TTL` short and add no third-party scripts to
+  `public/index.html`.
 - **Any authenticated user can search the whole customer address book.** That is
   what the mockup shows and what a tech arriving at an unlisted address needs,
   but it is a deliberate choice about PII, not an oversight.
@@ -960,6 +1018,7 @@ Recorded here so they are not rediscovered.
 - **Barcode scanning.** Hooks in at `SerialPicker`'s search field: add an
   `expo-camera` button and feed the decoded string into `setFilter`. Nothing else
   changes — the picker already filters the van's units by serial.
-- **Offline sync.** Hooks in at the mobile `QueryClient` (a persister plus a
+- **Offline sync** (the PWA's service worker caches the app shell only — it is
+  not this). Hooks in at the mobile `QueryClient` (a persister plus a
   mutation queue). The idempotency keys it needs are already in the schema and
   already sent by both clients.

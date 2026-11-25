@@ -276,6 +276,26 @@ machine's LAN IP — so there is nothing to configure unless your API is not on
 cannot connect, open the **Profile** tab: it shows the resolved API URL and where
 that URL came from. See [PROCESS.md](PROCESS.md) §3 for the short debugging path.
 
+#### Or run it as a PWA instead of Expo Go
+
+The same app also runs in a browser and can be installed to a phone's home
+screen — no Expo Go, no app store:
+
+```bash
+npm run dev:pwa      # http://localhost:8081 — sign in exactly as above
+```
+
+To ship it, `npm run build:pwa` writes a static site to `apps/mobile/dist`. Serve
+it over **HTTPS**, with `/api` forwarded to the API and every other path falling
+back to `index.html`. On the phone, open the site and choose **Install app**
+(Android Chrome) or **Share → Add to Home Screen** (iOS Safari).
+
+Two things to know before relying on it. HTTPS is required for installing *and*
+for the "Use my location" button, so `http://<LAN IP>:8081` on a phone will load
+but cannot pin a premises. And the installed app still needs a connection for
+jobs and stock — it only guarantees the app itself opens without one. Details
+and deploy options are in [PROCESS.md](PROCESS.md) §3, "The mobile app as a PWA".
+
 The warehouse dashboard also works in a phone browser: below 900px the sidebar
 becomes a drawer behind the ☰ button. To open it from a phone, see
 [PROCESS.md](PROCESS.md) §3, "Opening the dashboard on a phone".

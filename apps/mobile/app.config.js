@@ -52,6 +52,18 @@ module.exports = {
         },
       ],
     ],
+    // The PWA. Exported with `npm run build:pwa`. `single` produces one
+    // index.html that the host must serve for every route (an SPA), which is
+    // what lets expo-router run without server rendering. The manifest, service
+    // worker and icons live in public/; the <head> is app/+html.jsx.
+    web: {
+      bundler: 'metro',
+      output: 'single',
+      name: 'FTTH Field',
+      shortName: 'FTTH Field',
+      backgroundColor: BG,
+      themeColor: TEAL,
+    },
     experiments: {
       typedRoutes: false,
     },

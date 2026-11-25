@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { api, setUnauthorizedHandler } from '../api/client';
+import { api, ApiError, setUnauthorizedHandler } from '../api/client';
 import { getToken, setToken, clearToken } from './tokenStore';
 
 const AuthContext = createContext(null);
@@ -54,9 +54,14 @@ export function AuthProvider({ children }) {
         if (cancelled) return;
         setUser(me);
         setStatus(AUTHENTICATED);
-      } catch {
+      } catch (err) {
         if (!cancelled) {
-          await clearToken();
+          // Only a rejected token ends the session. A network failure (status 0)
+          // or a 5xx says nothing about the token, and throwing it away would
+          // sign a tech out every time they open the app in a dead spot. They
+          // see the login screen this time, and the next launch tries again.
+          const rejected = err instanceof ApiError && (err.status === 401 || err.status === 403);
+          if (rejected) await clearToken();
           setStatus(ANONYMOUS);
         }
       }
