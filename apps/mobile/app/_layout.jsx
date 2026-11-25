@@ -97,7 +97,7 @@ export default function RootLayout() {
     <SafeAreaProvider>
       <QueryClientProvider client={queryClient}>
         <AuthProvider>
-          <StatusBar style="light" backgroundColor={colors.bg} />
+          <StatusBar style="dark" backgroundColor={colors.bg} />
           <AuthGate>
             <Stack
               screenOptions={{

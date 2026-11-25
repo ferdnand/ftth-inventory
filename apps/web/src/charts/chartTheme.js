@@ -1,32 +1,29 @@
-// Chart palette and mark specs, validated against the card surface #171F2E.
+// Chart palette and mark specs, re-picked for the white card surface.
 //
-//   5-slot categorical: lightness band PASS · chroma PASS · contrast all >= 3:1
-//   teal ordinal ramp:  monotone PASS · adjacent lightness step PASS
+// The categorical slots and teal ramp were re-picked by eye for the light theme;
+// the contrast checks that validated the dark palette have not been re-run.
 //
-// DO NOT substitute the brand teal #2DD4BF into `series`. It measures OKLCH
-// L 0.785, above the 0.67 ceiling for a dark-mode categorical band, and fails
-// the lightness check. It is correct for buttons, the active tab, hero numbers
-// and accent text (8.87:1 on surface) — just not as a series fill. #17A398
-// reads as the same teal family and is in band.
+// DO NOT substitute the brand teal #2DD4BF into `series`: it is too pale on
+// white to read as a bar or line. #0F8F86 is the same teal family and holds up.
 //
 // The series order is the CVD mechanism: adjacent slots were chosen to stay
 // distinguishable under deuteranopia and protanopia. Reordering them breaks
 // that, so add to the end rather than inserting.
 export const chart = {
-  surface: '#171F2E',
-  grid: '#28334A',
-  axis: '#28334A',
-  axisText: '#8B96A8', // --text-2, not --text-3 (which measures 2.77:1)
+  surface: '#FFFFFF',
+  grid: '#E3E8F0',
+  axis: '#D5DCE8',
+  axisText: '#55607A', // --text-2, not --text-3 (decorative only)
 
-  series: ['#17A398', '#D95926', '#9085E9', '#C98500', '#D55181'],
-  seriesSingle: '#17A398',
-  ordinalTeal: ['#5EEAD4', '#2DD4BF', '#17A398', '#0F766E', '#115E59'],
+  series: ['#0F8F86', '#D95926', '#7C6FE0', '#B87400', '#D55181'],
+  seriesSingle: '#0F8F86',
+  ordinalTeal: ['#99F6E4', '#2DD4BF', '#14B8A6', '#0F766E', '#134E4A'],
 
   status: {
-    good: '#34D399',
-    warning: '#F5A623',
-    serious: '#EC835A',
-    critical: '#EF4565',
+    good: '#047857',
+    warning: '#B45309',
+    serious: '#C2410C',
+    critical: '#C81E45',
   },
 
   barMaxSize: 24,

@@ -43,7 +43,7 @@ const {
   expenseLinesByJob,
   jobCostSummary,
 } = require('../lib/jobLines');
-const { isFieldTech, requireAssignedLocation } = require('../middleware/auth');
+const { isFieldTech, requireAssignedLocation, requireRole } = require('../middleware/auth');
 
 // `address` stays in the select for the clients that already read it; `label`
 // is what to show now that a premises may not have one. See premisesLabel.
@@ -466,6 +466,60 @@ router.patch(
 
     const full = await db.query(`${JOB_SELECT} WHERE wo.id = $1`, [id]);
     res.json({ work_order: shapeJob(full.rows[0]) });
+  })
+);
+
+// DELETE /api/work-orders/:id   (admin only)
+//
+// For a job dispatched by mistake. Once a job has a fitted unit, drawn stock, or
+// any recorded labour or expense it is part of the cost and stock history, and
+// deleting it would make those numbers vanish — cancel it instead, which keeps
+// the record but stops it counting.
+router.delete(
+  '/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const job = await client.query('SELECT id FROM work_orders WHERE id = $1 FOR UPDATE', [id]);
+      if (job.rows.length === 0) throw notFound('Job not found');
+
+      const refs = await client.query(
+        `SELECT
+           (SELECT COUNT(*) FROM installations WHERE work_order_id = $1)::int AS installs,
+           (SELECT COUNT(*) FROM transactions WHERE work_order_id = $1)::int AS movements,
+           (SELECT COUNT(*) FROM job_materials WHERE work_order_id = $1)::int AS materials,
+           (SELECT COUNT(*) FROM job_services WHERE work_order_id = $1)::int AS labour,
+           (SELECT COUNT(*) FROM job_expenses WHERE work_order_id = $1)::int AS expenses`,
+        [id]
+      );
+      const r = refs.rows[0];
+      const reasons = [];
+      if (r.installs) reasons.push('a recorded installation');
+      if (r.movements) reasons.push(`${r.movements} stock movement(s)`);
+      if (r.materials) reasons.push(`${r.materials} material line(s)`);
+      if (r.labour) reasons.push(`${r.labour} labour line(s)`);
+      if (r.expenses) reasons.push(`${r.expenses} expense(s)`);
+      if (reasons.length > 0) {
+        throw conflict(
+          `Job #${id} cannot be deleted because it has ${reasons.join(', ')}. ` +
+            'Cancel it instead — the record stays but it stops counting.'
+        );
+      }
+
+      await client.query('DELETE FROM work_orders WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      res.json({ deleted: true, id });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   })
 );
 

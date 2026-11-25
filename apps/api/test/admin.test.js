@@ -129,6 +129,120 @@ test('a van cannot be left without a tech, and a non-tech cannot be given one', 
   assert.match(wrongRole.body.error, /field_tech/);
 });
 
+// --- Catalog clean-up -------------------------------------------------------
+
+test('an admin deletes an item nothing refers to, and takes its empty stock rows with it', async () => {
+  const unused = await h.createItem({ name: 'Old Splitter', trackingType: 'bulk', category: 'Splitter' });
+  await h.setStock({ itemId: unused.id, locationId: world.warehouse.id, quantity: 0 });
+
+  const res = await h.api.delete(`/api/items/${unused.id}`, { as: world.admin });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.deleted, true);
+
+  const list = await h.api.get('/api/items?include_inactive=true', { as: world.admin });
+  assert.ok(!list.body.items.some((i) => i.id === unused.id));
+});
+
+test('an item with history cannot be deleted — it is retired instead', async () => {
+  await h.createInstance({
+    itemId: world.ont.id,
+    serial: 'HISTORY-1',
+    locationId: world.warehouse.id,
+  });
+
+  const blocked = await h.api.delete(`/api/items/${world.ont.id}`, { as: world.admin });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /Retire it instead/);
+
+  const retired = await h.api.patch(`/api/items/${world.ont.id}`, {
+    as: world.admin,
+    body: { is_active: false },
+  });
+  assert.equal(retired.status, 200);
+  assert.equal(retired.body.item.is_active, false);
+});
+
+test('stock on hand blocks deleting an item', async () => {
+  await h.setStock({ itemId: world.cable.id, locationId: world.warehouse.id, quantity: 40 });
+
+  const res = await h.api.delete(`/api/items/${world.cable.id}`, { as: world.admin });
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /stock on hand/);
+});
+
+test('deleting an item is admin-only', async () => {
+  const unused = await h.createItem({ name: 'Spare', trackingType: 'bulk' });
+  for (const user of [world.staff, world.pm, world.tech]) {
+    const res = await h.api.delete(`/api/items/${unused.id}`, { as: user });
+    assert.equal(res.status, 403, `${user.role} should not be able to delete an item`);
+  }
+  const missing = await h.api.delete('/api/items/999999', { as: world.admin });
+  assert.equal(missing.status, 404);
+});
+
+test('a location can be retired when empty, and drops out of the default list', async () => {
+  const spare = await h.createLocation({ name: 'Old Depot', type: 'warehouse' });
+
+  const retired = await h.api.patch(`/api/locations/${spare.id}`, {
+    as: world.staff,
+    body: { is_active: false },
+  });
+  assert.equal(retired.status, 200);
+  assert.equal(retired.body.location.is_active, false);
+
+  const defaultList = await h.api.get('/api/locations', { as: world.staff });
+  assert.ok(!defaultList.body.locations.some((l) => l.id === spare.id));
+  const fullList = await h.api.get('/api/locations?include_inactive=true', { as: world.staff });
+  assert.ok(fullList.body.locations.some((l) => l.id === spare.id));
+});
+
+test('a location that still holds stock cannot be retired', async () => {
+  await h.setStock({ itemId: world.cable.id, locationId: world.warehouse.id, quantity: 10 });
+  const res = await h.api.patch(`/api/locations/${world.warehouse.id}`, {
+    as: world.admin,
+    body: { is_active: false },
+  });
+  assert.equal(res.status, 409);
+  assert.match(res.body.error, /still holds/);
+});
+
+test('an admin deletes an untouched location; one with history is refused', async () => {
+  const spare = await h.createLocation({ name: 'Mistake', type: 'warehouse' });
+  const ok = await h.api.delete(`/api/locations/${spare.id}`, { as: world.admin });
+  assert.equal(ok.status, 200);
+
+  // The van has a tech assigned to it, so it is referenced.
+  const blocked = await h.api.delete(`/api/locations/${world.van.id}`, { as: world.admin });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /Retire it instead/);
+
+  for (const user of [world.staff, world.pm, world.tech]) {
+    const res = await h.api.delete(`/api/locations/${spare.id}`, { as: user });
+    assert.equal(res.status, 403);
+  }
+});
+
+test('an admin deletes an empty job; a job with recorded work is refused', async () => {
+  const bare = await h.createJob({ premisesId: world.premises.id, status: 'open' });
+  const ok = await h.api.delete(`/api/work-orders/${bare.id}`, { as: world.admin });
+  assert.equal(ok.status, 200);
+  const gone = await h.api.get(`/api/work-orders/${bare.id}`, { as: world.admin });
+  assert.equal(gone.status, 404);
+
+  const busy = await h.createJob({ premisesId: world.premises.id, status: 'in_progress' });
+  await h.db.query(
+    `INSERT INTO job_expenses (work_order_id, category, amount, recorded_by)
+     VALUES ($1, 'transport', 500, $2)`,
+    [busy.id, world.admin.id]
+  );
+  const blocked = await h.api.delete(`/api/work-orders/${busy.id}`, { as: world.admin });
+  assert.equal(blocked.status, 409);
+  assert.match(blocked.body.error, /Cancel it instead/);
+
+  const notAdmin = await h.api.delete(`/api/work-orders/${busy.id}`, { as: world.pm });
+  assert.equal(notAdmin.status, 403);
+});
+
 // --- Serialized unit corrections ------------------------------------------
 
 test('an admin fixes a serial keyed wrong at receiving, and it is auditable', async () => {

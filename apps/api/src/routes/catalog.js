@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler, badRequest, notFound } = require('../lib/errors');
+const { asyncHandler, badRequest, notFound, conflict } = require('../lib/errors');
 const {
   requireFields,
   oneOf,
@@ -137,6 +137,64 @@ router.patch(
   })
 );
 
+// DELETE /api/items/:id   (admin only)
+//
+// Removing an item for good is only possible while nothing refers to it. Once a
+// unit was received, moved, requested or used on a job, the item is part of the
+// audit trail and deleting it would orphan those rows — retire it instead
+// (PATCH is_active=false), which hides it from pickers but keeps the history.
+//
+// Stock rows at zero quantity are bookkeeping, not history, so they go with the
+// item. Stock on hand blocks the delete: that is real inventory.
+router.delete(
+  '/items/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const item = await client.query('SELECT id, name FROM items WHERE id = $1 FOR UPDATE', [id]);
+      if (item.rows.length === 0) throw notFound('Item not found');
+
+      const refs = await client.query(
+        `SELECT
+           (SELECT COUNT(*) FROM item_instances WHERE item_id = $1)::int       AS units,
+           (SELECT COUNT(*) FROM transactions WHERE item_id = $1)::int         AS movements,
+           (SELECT COUNT(*) FROM restock_request_lines WHERE item_id = $1)::int AS restock_lines,
+           (SELECT COUNT(*) FROM job_materials WHERE item_id = $1)::int        AS job_lines,
+           (SELECT COUNT(*) FROM stock_levels WHERE item_id = $1 AND quantity <> 0)::int AS on_hand`,
+        [id]
+      );
+      const r = refs.rows[0];
+      const reasons = [];
+      if (r.units) reasons.push(`${r.units} serialized unit(s)`);
+      if (r.on_hand) reasons.push('stock on hand');
+      if (r.movements) reasons.push(`${r.movements} stock movement(s)`);
+      if (r.restock_lines) reasons.push(`${r.restock_lines} restock request line(s)`);
+      if (r.job_lines) reasons.push(`${r.job_lines} job material line(s)`);
+      if (reasons.length > 0) {
+        throw conflict(
+          `${item.rows[0].name} cannot be deleted because it has ${reasons.join(', ')}. ` +
+            'Retire it instead — it disappears from pickers but the history stays intact.'
+        );
+      }
+
+      await client.query('DELETE FROM stock_levels WHERE item_id = $1', [id]);
+      await client.query('DELETE FROM items WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      res.json({ deleted: true, id });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
+  })
+);
+
 // ------------------------------------------------------------
 // Services (billable labour)
 // ------------------------------------------------------------
@@ -226,7 +284,7 @@ router.patch(
 // Locations
 // ------------------------------------------------------------
 
-// GET /api/locations?type=warehouse
+// GET /api/locations?type=warehouse&include_inactive=true
 router.get(
   '/locations',
   asyncHandler(async (req, res) => {
@@ -234,13 +292,23 @@ router.get(
       ? oneOf(req.query.type, LOCATION_TYPES, 'type')
       : null;
 
+    const includeInactive = optionalBoolean(req.query.include_inactive, 'include_inactive');
+
+    const clauses = [];
+    const params = [];
+    if (type) {
+      params.push(type);
+      clauses.push(`l.type = $${params.length}`);
+    }
+    if (!includeInactive) clauses.push('l.is_active = TRUE');
+
     const result = await db.query(
       `SELECT l.*, u.name AS tech_name
        FROM locations l
        LEFT JOIN users u ON u.id = l.tech_id
-       ${type ? 'WHERE l.type = $1' : ''}
+       ${clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''}
        ORDER BY l.type, l.name`,
-      type ? [type] : []
+      params
     );
     res.json({ locations: result.rows });
   })
@@ -290,8 +358,24 @@ router.post(
   })
 );
 
+// What a location is holding right now, as phrases for an error message.
+async function locationHoldings(queryable, id) {
+  const r = await queryable.query(
+    `SELECT
+       (SELECT COUNT(*) FROM item_instances WHERE current_location_id = $1)::int AS units,
+       (SELECT COUNT(*) FROM stock_levels
+         WHERE location_id = $1 AND quantity <> 0)::int AS bulk_lines`,
+    [id]
+  );
+  const { units, bulk_lines: bulk } = r.rows[0];
+  const out = [];
+  if (units) out.push(`${units} serialized unit(s)`);
+  if (bulk) out.push(`${bulk} bulk stock line(s)`);
+  return out;
+}
+
 // PATCH /api/locations/:id
-// body: { name?, tech_id?, address? }
+// body: { name?, tech_id?, address?, is_active? }
 //
 // A location is renamed, readdressed and reassigned far more often than the
 // data model suggests: a van changes driver, a warehouse moves premises. Until
@@ -307,7 +391,7 @@ router.patch(
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
 
-    const existing = await db.query('SELECT id, type, tech_id FROM locations WHERE id = $1', [id]);
+    const existing = await db.query('SELECT id, type, tech_id, is_active FROM locations WHERE id = $1', [id]);
     if (existing.rows.length === 0) throw notFound('Location not found');
     const current = existing.rows[0];
 
@@ -333,6 +417,21 @@ router.patch(
       await assertTechSuitable(current.type, techId);
       set('tech_id', techId);
     }
+    if (req.body.is_active !== undefined) {
+      const active = optionalBoolean(req.body.is_active, 'is_active');
+      // Retiring a place that still holds stock would hide inventory that is
+      // really there. Move it or count it out first.
+      if (active === false && current.is_active) {
+        const holding = await locationHoldings(db, id);
+        if (holding.length > 0) {
+          throw conflict(
+            `Cannot retire a location that still holds ${holding.join(' and ')}. ` +
+              'Transfer it elsewhere first.'
+          );
+        }
+      }
+      set('is_active', active);
+    }
 
     if (sets.length === 0) throw badRequest('No editable fields were provided');
 
@@ -342,6 +441,66 @@ router.patch(
       params
     );
     res.json({ location: result.rows[0] });
+  })
+);
+
+// DELETE /api/locations/:id   (admin only)
+//
+// Same rule as items: only while nothing refers to the location. Anything that
+// was ever received here, moved through here, requested for here or assigned to
+// it is history, and the answer is to retire the location instead.
+router.delete(
+  '/locations/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const loc = await client.query('SELECT id, name FROM locations WHERE id = $1 FOR UPDATE', [id]);
+      if (loc.rows.length === 0) throw notFound('Location not found');
+
+      const refs = await client.query(
+        `SELECT
+           (SELECT COUNT(*) FROM item_instances WHERE current_location_id = $1)::int AS units,
+           (SELECT COUNT(*) FROM stock_levels WHERE location_id = $1 AND quantity <> 0)::int AS on_hand,
+           (SELECT COUNT(*) FROM transactions
+             WHERE from_location_id = $1 OR to_location_id = $1)::int AS movements,
+           (SELECT COUNT(*) FROM restock_requests
+             WHERE from_location_id = $1 OR to_location_id = $1)::int AS restocks,
+           (SELECT COUNT(*) FROM customer_premises WHERE site_id = $1)::int AS premises,
+           (SELECT COUNT(*) FROM job_materials WHERE from_location_id = $1)::int AS job_lines,
+           (SELECT COUNT(*) FROM users WHERE assigned_location_id = $1)::int AS people`,
+        [id]
+      );
+      const r = refs.rows[0];
+      const reasons = [];
+      if (r.units) reasons.push(`${r.units} serialized unit(s)`);
+      if (r.on_hand) reasons.push('stock on hand');
+      if (r.movements) reasons.push(`${r.movements} stock movement(s)`);
+      if (r.restocks) reasons.push(`${r.restocks} restock request(s)`);
+      if (r.premises) reasons.push(`${r.premises} premises recorded at this site`);
+      if (r.job_lines) reasons.push(`${r.job_lines} job material line(s)`);
+      if (r.people) reasons.push(`${r.people} user(s) assigned to it`);
+      if (reasons.length > 0) {
+        throw conflict(
+          `${loc.rows[0].name} cannot be deleted because it has ${reasons.join(', ')}. ` +
+            'Retire it instead — it disappears from pickers but the history stays intact.'
+        );
+      }
+
+      await client.query('DELETE FROM stock_levels WHERE location_id = $1', [id]);
+      await client.query('DELETE FROM locations WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      res.json({ deleted: true, id });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   })
 );
 

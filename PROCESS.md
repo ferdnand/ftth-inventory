@@ -464,6 +464,18 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   in `catch`, and releases in `finally`. `POST /api/installations/:premisesId/replace`
   is the reference implementation.
 
+- **Items, locations and jobs share one rule: retire, don't delete.** Each has a
+  three-dots row menu on its list page (`components/RowMenu.jsx`). Retire is
+  `is_active=false` for items and locations, and status `cancelled` for a job.
+  `DELETE` is admin-only and returns 409 when anything refers to the row: a
+  location with stock, movements, restock requests, premises, job lines or an
+  assigned user; a job with an installation, stock movement, or any
+  material/labour/expense line. A location holding stock also cannot be retired.
+- **Items are retired by default, deleted only when untouched.** `DELETE
+  /api/items/:id` is admin-only and returns 409 if any unit, stock movement,
+  restock line, job material line or non-zero stock row refers to the item;
+  zero-quantity `stock_levels` rows are removed with it. Retiring
+  (`is_active = false`) is the normal way to stop using an item.
 - **Serialized vs bulk is a first-class split.** `items.tracking_type` decides
   which storage model applies — `item_instances` rows per physical unit, or a
   `stock_levels` quantity per `(item_id, location_id)`. Endpoints accepting

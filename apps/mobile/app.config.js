@@ -1,9 +1,9 @@
 // Expo app config.
 //
-// Kept as JS rather than app.json so the dark palette can be read from one
+// Kept as JS rather than app.json so the palette can be read from one
 // place — the same hex values the mockup defines.
-const BG = '#0E1420';
-const TEAL = '#2DD4BF';
+const BG = '#F3F5F9';
+const TEAL = '#0F766E';
 
 module.exports = {
   expo: {
@@ -12,7 +12,7 @@ module.exports = {
     version: '0.1.0',
     orientation: 'portrait',
     scheme: 'ftthfield',
-    userInterfaceStyle: 'dark',
+    userInterfaceStyle: 'light',
     newArchEnabled: true,
     backgroundColor: BG,
     splash: {

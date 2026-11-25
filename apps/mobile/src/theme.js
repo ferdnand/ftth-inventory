@@ -11,35 +11,38 @@
 // Anything load-bearing uses `label`/`meta` (which point at text2, 5.52:1);
 // text3 stays for genuinely decorative text.
 export const colors = {
-  bg: '#0E1420',
-  surface: '#171F2E',
-  surface2: '#1F2A3D',
-  border: '#28334A',
-  teal: '#2DD4BF',
-  tealDim: '#1B7A70',
-  amber: '#F5A623',
-  danger: '#EF4565',
-  success: '#34D399',
-  text1: '#EDF1F7',
-  text2: '#8B96A8',
-  text3: '#5A6478',
+  // LIGHT THEME — mirrors apps/web/src/styles/tokens.css. Colours used as text
+  // were re-picked to clear 4.5:1 on white; the original dark mockup values no
+  // longer apply.
+  bg: '#F3F5F9',
+  surface: '#FFFFFF',
+  surface2: '#EAEEF5',
+  border: '#D5DCE8',
+  teal: '#0F766E',
+  tealDim: '#7CC7BF',
+  amber: '#B45309',
+  danger: '#C81E45',
+  success: '#047857',
+  text1: '#172033',
+  text2: '#55607A',
+  text3: '#8A94A8',
 
   // Semantic aliases
-  label: '#8B96A8',
-  meta: '#8B96A8',
-  decorative: '#5A6478',
+  label: '#55607A',
+  meta: '#55607A',
+  decorative: '#8A94A8',
 
-  // Translucent fills, taken from the mockup's badge rules
-  lowBg: 'rgba(245,166,35,0.15)',
-  lowBorder: 'rgba(245,166,35,0.35)',
-  okBg: 'rgba(52,211,153,0.12)',
-  okBorder: 'rgba(52,211,153,0.3)',
-  installedBg: 'rgba(45,212,191,0.12)',
-  installedBorder: 'rgba(45,212,191,0.3)',
-  dangerBg: 'rgba(239,69,101,0.12)',
-  dangerBorder: 'rgba(239,69,101,0.3)',
-  selectedBg: 'rgba(45,212,191,0.06)',
-  onTeal: '#04141A',
+  // Translucent fills for badges: the text colour at low opacity
+  lowBg: 'rgba(180,83,9,0.12)',
+  lowBorder: 'rgba(180,83,9,0.35)',
+  okBg: 'rgba(4,120,87,0.1)',
+  okBorder: 'rgba(4,120,87,0.3)',
+  installedBg: 'rgba(15,118,110,0.1)',
+  installedBorder: 'rgba(15,118,110,0.3)',
+  dangerBg: 'rgba(200,30,69,0.1)',
+  dangerBorder: 'rgba(200,30,69,0.3)',
+  selectedBg: 'rgba(15,118,110,0.06)',
+  onTeal: '#FFFFFF',
 };
 
 export const fonts = {

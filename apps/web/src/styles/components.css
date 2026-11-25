@@ -63,7 +63,7 @@
   text-decoration: none;
 }
 .nav-link.active {
-  background: rgba(45, 212, 191, 0.1);
+  background: rgba(15, 118, 110, 0.1);
   color: var(--teal);
 }
 
@@ -90,7 +90,7 @@
     90deg,
     transparent 0%,
     var(--teal) 20%,
-    #7ff0e3 50%,
+    #5eead4 50%,
     var(--teal) 80%,
     transparent 100%
   );
@@ -195,7 +195,7 @@
   gap: 10px;
 }
 .card.low {
-  border-color: rgba(245, 166, 35, 0.4);
+  border-color: rgba(180, 83, 9, 0.4);
 }
 .card-title {
   font-family: var(--font-display);
@@ -247,24 +247,24 @@
   white-space: nowrap;
 }
 .badge.low {
-  background: rgba(245, 166, 35, 0.15);
+  background: rgba(180, 83, 9, 0.15);
   color: var(--amber);
-  border-color: rgba(245, 166, 35, 0.35);
+  border-color: rgba(180, 83, 9, 0.35);
 }
 .badge.ok {
-  background: rgba(52, 211, 153, 0.12);
+  background: rgba(4, 120, 87, 0.12);
   color: var(--success);
-  border-color: rgba(52, 211, 153, 0.3);
+  border-color: rgba(4, 120, 87, 0.3);
 }
 .badge.installed {
-  background: rgba(45, 212, 191, 0.12);
+  background: rgba(15, 118, 110, 0.12);
   color: var(--teal);
-  border-color: rgba(45, 212, 191, 0.3);
+  border-color: rgba(15, 118, 110, 0.3);
 }
 .badge.danger {
-  background: rgba(239, 69, 101, 0.12);
+  background: rgba(200, 30, 69, 0.12);
   color: var(--danger);
-  border-color: rgba(239, 69, 101, 0.3);
+  border-color: rgba(200, 30, 69, 0.3);
 }
 
 /* --- Stats -------------------------------------------------------------- */
@@ -299,7 +299,7 @@
   color: var(--amber);
 }
 .stat.warn {
-  border-color: rgba(245, 166, 35, 0.4);
+  border-color: rgba(180, 83, 9, 0.4);
 }
 
 .hero-figure {
@@ -416,7 +416,7 @@ td.num {
 }
 .btn-primary {
   background: var(--teal);
-  color: #04141a;
+  color: #ffffff;
   font-weight: 700;
   border: none;
 }
@@ -429,9 +429,9 @@ td.num {
   background: var(--surface-2);
 }
 .btn-danger {
-  background: rgba(239, 69, 101, 0.1);
+  background: rgba(200, 30, 69, 0.1);
   color: var(--danger);
-  border: 1px solid rgba(239, 69, 101, 0.35);
+  border: 1px solid rgba(200, 30, 69, 0.35);
 }
 .btn-primary:disabled,
 .btn-secondary:disabled,
@@ -441,6 +441,46 @@ td.num {
 }
 .btn-block {
   width: 100%;
+}
+/* --- Row menu (three dots) ---------------------------------------------- */
+
+.row-menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 8px;
+}
+.row-menu {
+  position: fixed;
+  z-index: 200;
+  min-width: 160px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-pop);
+}
+.row-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text-1);
+  font-family: var(--font-body);
+  font-size: 13.5px;
+  cursor: pointer;
+}
+.row-menu-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+.row-menu-item.danger {
+  color: var(--danger);
+}
+.row-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 .btn-sm {
   padding: 6px 10px;
@@ -588,7 +628,7 @@ td.num {
 }
 .result-item.selected {
   border-color: var(--teal);
-  background: rgba(45, 212, 191, 0.06);
+  background: rgba(15, 118, 110, 0.06);
 }
 
 /* --- Timeline ----------------------------------------------------------- */
@@ -649,14 +689,14 @@ td.num {
   font-weight: 600;
   padding: 2px 7px;
   border-radius: var(--radius-pill);
-  background: rgba(239, 69, 101, 0.12);
+  background: rgba(200, 30, 69, 0.12);
   color: var(--danger);
-  border: 1px solid rgba(239, 69, 101, 0.3);
+  border: 1px solid rgba(200, 30, 69, 0.3);
 }
 .t-reason.upgrade {
-  background: rgba(45, 212, 191, 0.1);
+  background: rgba(15, 118, 110, 0.1);
   color: var(--teal);
-  border-color: rgba(45, 212, 191, 0.3);
+  border-color: rgba(15, 118, 110, 0.3);
 }
 
 /* --- Work order chip ---------------------------------------------------- */
@@ -706,7 +746,7 @@ td.num {
 .chip.active {
   border-color: var(--teal);
   color: var(--teal);
-  background: rgba(45, 212, 191, 0.08);
+  background: rgba(15, 118, 110, 0.08);
 }
 
 .filter-bar {
@@ -747,7 +787,7 @@ td.num {
   margin: 0 auto 12px;
 }
 .error-state {
-  border-color: rgba(239, 69, 101, 0.35);
+  border-color: rgba(200, 30, 69, 0.35);
 }
 
 .skeleton-row {
@@ -777,13 +817,13 @@ td.num {
   padding: 10px 12px;
   font-size: 13px;
   margin-bottom: 12px;
-  border: 1px solid rgba(239, 69, 101, 0.35);
-  background: rgba(239, 69, 101, 0.1);
+  border: 1px solid rgba(200, 30, 69, 0.35);
+  background: rgba(200, 30, 69, 0.1);
   color: var(--text-1);
 }
 .banner.info {
-  border-color: rgba(45, 212, 191, 0.3);
-  background: rgba(45, 212, 191, 0.08);
+  border-color: rgba(15, 118, 110, 0.3);
+  background: rgba(15, 118, 110, 0.08);
 }
 
 /* --- Toasts ------------------------------------------------------------- */
@@ -805,7 +845,7 @@ td.num {
   border-radius: var(--radius-sm);
   padding: 11px 13px;
   font-size: 13px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop);
 }
 .toast.error {
   border-left-color: var(--danger);
@@ -816,7 +856,7 @@ td.num {
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(5, 7, 11, 0.72);
+  background: rgba(26, 34, 51, 0.45);
   display: flex;
   align-items: flex-start;
   justify-content: center;
@@ -904,7 +944,7 @@ td.num {
   border-radius: var(--radius-sm);
   padding: 9px 11px;
   font-size: 12px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-pop);
 }
 .chart-tooltip .tt-label {
   font-family: var(--font-display);

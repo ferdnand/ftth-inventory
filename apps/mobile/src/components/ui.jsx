@@ -122,9 +122,9 @@ export const styles = StyleSheet.create({
   },
   btnSecondaryText: { fontFamily: fonts.display, fontSize: 13.5, color: colors.text1 },
   btnDanger: {
-    backgroundColor: 'rgba(239,69,101,0.1)',
+    backgroundColor: 'rgba(200,30,69,0.1)',
     borderWidth: 1,
-    borderColor: 'rgba(239,69,101,0.35)',
+    borderColor: 'rgba(200,30,69,0.35)',
     borderRadius: radius.md,
     paddingVertical: 12,
     alignItems: 'center',
@@ -250,14 +250,14 @@ export const styles = StyleSheet.create({
   banner: {
     borderRadius: radius.sm,
     borderWidth: 1,
-    borderColor: 'rgba(239,69,101,0.35)',
-    backgroundColor: 'rgba(239,69,101,0.1)',
+    borderColor: 'rgba(200,30,69,0.35)',
+    backgroundColor: 'rgba(200,30,69,0.1)',
     padding: 12,
     marginBottom: 12,
   },
   bannerInfo: {
     borderColor: colors.installedBorder,
-    backgroundColor: 'rgba(45,212,191,0.08)',
+    backgroundColor: 'rgba(15,118,110,0.08)',
   },
   bannerText: { fontFamily: fonts.body, fontSize: 13, color: colors.text1 },
 

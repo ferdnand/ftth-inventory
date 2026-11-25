@@ -37,10 +37,12 @@ export const useServices = (params) =>
     staleTime: 5 * 60_000,
   });
 
-export const useLocations = (type) =>
+// Retired locations are left out unless asked for; only the Locations page,
+// where they can be restored, asks.
+export const useLocations = (type, { includeInactive = false } = {}) =>
   useQuery({
-    queryKey: keys.locations(type),
-    queryFn: () => api.locations(type),
+    queryKey: [...keys.locations(type), includeInactive ? 'with-retired' : 'active'],
+    queryFn: () => api.locations(type, includeInactive ? { include_inactive: true } : undefined),
     select: (data) => data.locations,
     staleTime: 5 * 60_000,
   });
@@ -248,6 +250,14 @@ export function useUpdateItem() {
   });
 }
 
+export function useDeleteItem() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => api.deleteItem(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['items'] }),
+  });
+}
+
 export function useCreateService() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -350,6 +360,25 @@ export function useUpdateWorkOrder() {
       queryClient.invalidateQueries({ queryKey: ['work-orders'] });
       queryClient.invalidateQueries({ queryKey: ['reports'] });
     },
+  });
+}
+
+export function useDeleteWorkOrder() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => api.deleteWorkOrder(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['work-orders'] });
+      queryClient.invalidateQueries({ queryKey: ['reports'] });
+    },
+  });
+}
+
+export function useDeleteLocation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => api.deleteLocation(id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['locations'] }),
   });
 }
 

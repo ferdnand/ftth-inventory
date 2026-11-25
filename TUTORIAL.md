@@ -1030,6 +1030,27 @@ That is the same 409 anyone else gets. The unit is one half of a live
 installation; removing it through the installation endpoint fixes both rows
 together, and there is no path that fixes only one.
 
+### 11.1b Cleaning up without SQL: the three-dots menu
+
+**Catalog → Items**, **Stock → Locations** and **Operations → Jobs** each have a
+`⋮` menu at the end of every row.
+
+| | Edit | Retire / Restore | Delete (admin only) |
+|---|---|---|---|
+| Item | name, category, unit, threshold, cost… (tracking type is locked) | hides it from pickers, keeps history | only if never received, moved, requested or used |
+| Location | name, address, assigned tech (type is locked) | only when it holds no stock | only if nothing ever touched it and nobody is assigned |
+| Job | assigned tech, scheduled date, notes | **Cancel job** (open/in-progress only) | only a job with no installation, stock or recorded costs |
+
+Retired items and locations stay visible to staff, marked "Retired", so you can
+restore them. A refused delete answers `409` and says what blocks it and what
+to do instead.
+
+```bash
+curl -s -X DELETE localhost:4000/api/items/12 -H "Authorization: Bearer $ADMIN"
+```
+
+Run `npm run migrate` in `apps/api` once to add the location retire flag (migration 014).
+
 ### 11.2 Fixing a record: a serial keyed wrong
 
 A carton of ONTs was received last week and one serial went in with a lowercase
@@ -1188,6 +1209,7 @@ happens anyway, `npm run create-admin -w apps/api` on the server is the way back
 | Progress or complete a job | either | `PATCH /api/work-orders/:id` |
 | Say which day a job was done | either | `PATCH /api/work-orders/:id` (`performed_on`) |
 | Price an item or a service | dashboard → Catalog | `PATCH /api/items/:id` · `PATCH /api/services/:id` |
+| Retire or delete an item you no longer use | dashboard → Catalog → Items | `PATCH /api/items/:id` (`is_active`) · `DELETE /api/items/:id` (admin) |
 | Add a user / assign a van | dashboard → Users (PM only) | `POST` / `PATCH /api/users` |
 | Rename a location / reassign a van | dashboard → Locations → Edit | `PATCH /api/locations/:id` |
 | Fix a customer address | dashboard → Premises → Edit premises | `PATCH /api/premises/:id` |

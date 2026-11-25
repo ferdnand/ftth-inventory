@@ -1,0 +1,11 @@
+-- ============================================================
+-- Retiring a location
+-- ============================================================
+-- A van changes hands, a warehouse closes. Until now the only options were to
+-- leave the dead location in every picker forever or to delete it with SQL and
+-- hope nothing referenced it. Everything books stock against a location, so
+-- deleting is rarely possible; retiring is the normal path.
+--
+-- Same shape as items.is_active and services.is_active: a retired location
+-- keeps its history and drops out of the default list.
+ALTER TABLE locations ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE;

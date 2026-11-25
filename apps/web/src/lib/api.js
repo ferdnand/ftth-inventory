@@ -60,12 +60,16 @@ export const api = {
   items: (params) => request('/items', { params }),
   createItem: (body) => request('/items', { method: 'POST', body }),
   updateItem: (id, body) => request(`/items/${id}`, { method: 'PATCH', body }),
+  // Admin-only, and refused (409) once the item has any history — retire it then.
+  deleteItem: (id) => request(`/items/${id}`, { method: 'DELETE' }),
 
   services: (params) => request('/services', { params }),
   createService: (body) => request('/services', { method: 'POST', body }),
   updateService: (id, body) => request(`/services/${id}`, { method: 'PATCH', body }),
 
-  locations: (type) => request('/locations', { params: { type } }),
+  locations: (type, params) => request('/locations', { params: { type, ...params } }),
+  // Admin-only, and refused (409) once the location has any history — retire it then.
+  deleteLocation: (id) => request(`/locations/${id}`, { method: 'DELETE' }),
   createLocation: (body) => request('/locations', { method: 'POST', body }),
   updateLocation: (id, body) => request(`/locations/${id}`, { method: 'PATCH', body }),
 
@@ -114,6 +118,8 @@ export const api = {
   workOrder: (id) => request(`/work-orders/${id}`),
   createWorkOrder: (body) => request('/work-orders', { method: 'POST', body }),
   updateWorkOrder: (id, body) => request(`/work-orders/${id}`, { method: 'PATCH', body }),
+  // Admin-only, and refused (409) once the job has recorded work — cancel it then.
+  deleteWorkOrder: (id) => request(`/work-orders/${id}`, { method: 'DELETE' }),
 
   // The three kinds of line a job owns. Each PUT takes the COMPLETE list and
   // replaces what is there; materials additionally move van stock by the

@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
 import { useAuth } from '../auth/AuthContext';
-import { useCreateItem, useItems } from '../hooks/useData';
+import { useCreateItem, useDeleteItem, useItems, useUpdateItem } from '../hooks/useData';
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RowMenu } from '../components/RowMenu';
 import { NumberInput, Select, TextInput } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
@@ -13,19 +15,25 @@ import { TRACKING_TYPES, label } from '../lib/constants';
 
 const UNITS = ['unit', 'meter', 'box', 'roll', 'metre'];
 
-function ItemFormDialog({ onClose, categories }) {
+// Creates a new item, or edits `item` when one is passed. Editing cannot change
+// the tracking type: the API refuses it because every unit and stock row already
+// booked against the item depends on it.
+function ItemFormDialog({ onClose, categories, item = null }) {
   const create = useCreateItem();
+  const update = useUpdateItem();
+  const saving = create.isPending || update.isPending;
+  const editing = item !== null;
   const { notify, notifyError } = useToast();
 
   const [form, setForm] = useState({
-    name: '',
-    category: '',
-    tracking_type: 'serialized',
-    unit_of_measure: 'unit',
-    manufacturer: '',
-    model: '',
-    reorder_threshold: '',
-    unit_cost: '',
+    name: item?.name ?? '',
+    category: item?.category ?? '',
+    tracking_type: item?.tracking_type ?? 'serialized',
+    unit_of_measure: item?.unit_of_measure ?? 'unit',
+    manufacturer: item?.manufacturer ?? '',
+    model: item?.model ?? '',
+    reorder_threshold: item?.reorder_threshold ?? '',
+    unit_cost: item?.unit_cost ?? '',
   });
   const [errors, setErrors] = useState({});
 
@@ -51,19 +59,27 @@ function ItemFormDialog({ onClose, categories }) {
   async function onSubmit(event) {
     event.preventDefault();
     if (!validate()) return;
+    // A blank is `undefined` on create (omit it) but `null` on edit, where
+    // omitting a field would leave the old value in place instead of clearing it.
+    const blank = editing ? null : undefined;
+    const body = {
+      name: form.name.trim(),
+      category: form.category.trim(),
+      unit_of_measure: form.unit_of_measure.trim(),
+      manufacturer: form.manufacturer.trim() || blank,
+      model: form.model.trim() || blank,
+      reorder_threshold:
+        form.reorder_threshold === '' ? blank : Number(form.reorder_threshold),
+      unit_cost: form.unit_cost === '' ? blank : Number(form.unit_cost),
+    };
     try {
-      await create.mutateAsync({
-        name: form.name.trim(),
-        category: form.category.trim(),
-        tracking_type: form.tracking_type,
-        unit_of_measure: form.unit_of_measure.trim(),
-        manufacturer: form.manufacturer.trim() || undefined,
-        model: form.model.trim() || undefined,
-        reorder_threshold:
-          form.reorder_threshold === '' ? undefined : Number(form.reorder_threshold),
-        unit_cost: form.unit_cost === '' ? undefined : Number(form.unit_cost),
-      });
-      notify(`${form.name.trim()} added to the catalog`);
+      if (editing) {
+        await update.mutateAsync({ id: item.id, ...body });
+        notify(`${body.name} updated`);
+      } else {
+        await create.mutateAsync({ ...body, tracking_type: form.tracking_type });
+        notify(`${body.name} added to the catalog`);
+      }
       onClose();
     } catch (err) {
       notifyError(err);
@@ -72,15 +88,15 @@ function ItemFormDialog({ onClose, categories }) {
 
   return (
     <Modal
-      title="New item"
+      title={editing ? `Edit ${item.name}` : 'New item'}
       onClose={onClose}
       footer={
         <>
           <button type="button" className="btn-secondary" onClick={onClose}>
             Cancel
           </button>
-          <button type="submit" form="item-form" className="btn-primary" disabled={create.isPending}>
-            {create.isPending ? 'Saving…' : 'Create item'}
+          <button type="submit" form="item-form" className="btn-primary" disabled={saving}>
+            {saving ? 'Saving…' : editing ? 'Save changes' : 'Create item'}
           </button>
         </>
       }
@@ -117,8 +133,11 @@ function ItemFormDialog({ onClose, categories }) {
           value={form.tracking_type}
           onChange={set('tracking_type')}
           options={TRACKING_TYPES.map((t) => ({ value: t, label: label(t) }))}
+          disabled={editing}
           hint={
-            form.tracking_type === 'serialized'
+            editing
+              ? 'Fixed once an item exists. To change it, create a new item and retire this one.'
+              : form.tracking_type === 'serialized'
               ? 'Each unit is tracked individually by serial number — routers, ONTs, media converters. This drives everything downstream: installs, replacements and site history all key off a serial.'
               : 'Tracked as a quantity per location — cable, sleeves, connectors. Cannot be installed at a premises or replaced.'
           }
@@ -130,7 +149,10 @@ function ItemFormDialog({ onClose, categories }) {
             label="Unit"
             value={form.unit_of_measure}
             onChange={set('unit_of_measure')}
-            options={UNITS.map((u) => ({ value: u, label: u }))}
+            options={[...new Set([...UNITS, form.unit_of_measure])].map((u) => ({
+              value: u,
+              label: u,
+            }))}
             error={errors.unit_of_measure}
           />
           <NumberInput
@@ -171,12 +193,67 @@ function ItemFormDialog({ onClose, categories }) {
   );
 }
 
+// Deleting is permanent, so it asks first and says what the alternative is.
+function DeleteItemDialog({ item, onClose }) {
+  const remove = useDeleteItem();
+  const { notify, notifyError } = useToast();
+
+  async function onConfirm() {
+    try {
+      await remove.mutateAsync(item.id);
+      notify(`${item.name} deleted`);
+      onClose();
+    } catch (err) {
+      // A 409 here means the item has history; its message tells the admin to
+      // retire it instead.
+      notifyError(err);
+      onClose();
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      title={`Delete ${item.name}?`}
+      confirmLabel="Delete permanently"
+      pendingLabel="Deleting…"
+      pending={remove.isPending}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    >
+      <p>
+        This removes the item from the catalog for good and cannot be undone. It only works for
+        an item that was never received, moved, requested or used on a job.
+      </p>
+      <p>
+        If it has been used, or you just want it out of the pickers, use <strong>Retire</strong>{' '}
+        instead — the history stays intact and you can restore it later.
+      </p>
+    </ConfirmDialog>
+  );
+}
+
 export function ItemsPage() {
   const { hasRole } = useAuth();
-  const items = useItems();
+  const canEdit = hasRole('warehouse_staff', 'pm');
+  const canDelete = hasRole('admin');
+  // Editors also see retired items, otherwise there is nothing to restore.
+  const items = useItems(canEdit ? { include_inactive: true } : undefined);
+  const update = useUpdateItem();
+  const { notify, notifyError } = useToast();
   const [search, setSearch] = useState('');
   const [category, setCategory] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  async function toggleActive(row) {
+    try {
+      await update.mutateAsync({ id: row.id, is_active: !row.is_active });
+      notify(row.is_active ? `${row.name} retired` : `${row.name} restored`);
+    } catch (err) {
+      notifyError(err);
+    }
+  }
 
   const categories = useMemo(
     () => [...new Set((items.data ?? []).map((i) => i.category))].sort(),
@@ -228,6 +305,34 @@ export function ItemsPage() {
       numeric: true,
       render: (row) => formatMoney(row.unit_cost),
     },
+    ...(canEdit
+      ? [
+          {
+            key: 'is_active',
+            header: 'Status',
+            render: (row) =>
+              row.is_active ? <Badge variant="installed">Active</Badge> : <Badge>Retired</Badge>,
+          },
+          {
+            key: 'actions',
+            header: '',
+            render: (row) => (
+              <RowMenu
+                label={`Actions for ${row.name}`}
+                items={[
+                  { label: 'Edit', onSelect: () => setEditing(row) },
+                  {
+                    label: row.is_active ? 'Retire' : 'Restore',
+                    onSelect: () => toggleActive(row),
+                    disabled: update.isPending,
+                  },
+                  { label: 'Delete…', danger: true, hidden: !canDelete, onSelect: () => setDeleting(row) },
+                ]}
+              />
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -296,6 +401,10 @@ export function ItemsPage() {
       {showForm ? (
         <ItemFormDialog onClose={() => setShowForm(false)} categories={categories} />
       ) : null}
+      {editing ? (
+        <ItemFormDialog item={editing} onClose={() => setEditing(null)} categories={categories} />
+      ) : null}
+      {deleting ? <DeleteItemDialog item={deleting} onClose={() => setDeleting(null)} /> : null}
     </div>
   );
 }

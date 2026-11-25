@@ -3,7 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import {
   useCreateWorkOrder,
+  useDeleteWorkOrder,
   usePremisesSearch,
+  useUpdateWorkOrder,
   useUsers,
   useWorkOrders,
 } from '../hooks/useData';
@@ -11,6 +13,8 @@ import { useDebounced } from '../hooks/useDebounced';
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RowMenu } from '../components/RowMenu';
 import { DateInput, Select, TextArea } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
@@ -156,11 +160,130 @@ function WorkOrderFormDialog({ onClose }) {
   );
 }
 
+// The dispatcher's fields: who, when, and the note. What the visit used and cost
+// is edited on the job's own page, where the lines live.
+function EditJobDialog({ job, onClose }) {
+  const update = useUpdateWorkOrder();
+  const techs = useUsers({ role: 'field_tech', is_active: true });
+  const { notify, notifyError } = useToast();
+
+  const [techId, setTechId] = useState(job.assigned_tech_id ? String(job.assigned_tech_id) : '');
+  const [scheduled, setScheduled] = useState(job.scheduled_date ?? '');
+  const [notes, setNotes] = useState(job.notes ?? '');
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    try {
+      // null clears a field; leaving it out would keep the old value.
+      await update.mutateAsync({
+        id: job.id,
+        assigned_tech_id: techId ? Number(techId) : null,
+        scheduled_date: scheduled || null,
+        notes: notes.trim() || null,
+      });
+      notify(`Job #${job.id} updated`);
+      onClose();
+    } catch (err) {
+      notifyError(err);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Edit job #${job.id}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" form="edit-job-form" className="btn-primary" disabled={update.isPending}>
+            {update.isPending ? 'Saving…' : 'Save changes'}
+          </button>
+        </>
+      }
+    >
+      <form id="edit-job-form" onSubmit={onSubmit}>
+        <div className="field-row">
+          <Select
+            id="edit-job-tech"
+            label="Assign to"
+            value={techId}
+            onChange={setTechId}
+            placeholder="Unassigned"
+            options={(techs.data ?? []).map((u) => ({ value: String(u.id), label: u.name }))}
+          />
+          <DateInput id="edit-job-date" label="Scheduled" value={scheduled} onChange={setScheduled} />
+        </div>
+        <TextArea
+          id="edit-job-notes"
+          label="Notes"
+          value={notes}
+          onChange={setNotes}
+          style={{ minHeight: 80 }}
+        />
+      </form>
+    </Modal>
+  );
+}
+
+function DeleteJobDialog({ job, onClose }) {
+  const remove = useDeleteWorkOrder();
+  const { notify, notifyError } = useToast();
+
+  async function onConfirm() {
+    try {
+      await remove.mutateAsync(job.id);
+      notify(`Job #${job.id} deleted`);
+    } catch (err) {
+      // A 409 means work was recorded against it; its message says to cancel.
+      notifyError(err);
+    }
+    onClose();
+  }
+
+  return (
+    <ConfirmDialog
+      title={`Delete job #${job.id}?`}
+      confirmLabel="Delete permanently"
+      pendingLabel="Deleting…"
+      pending={remove.isPending}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    >
+      <p>
+        This removes the job for good and cannot be undone. It only works for a job dispatched
+        by mistake — one with no fitted unit, no stock drawn, and no labour or expenses recorded.
+      </p>
+      <p>
+        Otherwise use <strong>Cancel job</strong>: the record stays, but it stops counting.
+      </p>
+    </ConfirmDialog>
+  );
+}
+
 export function WorkOrdersPage() {
   const { hasRole } = useAuth();
   const navigate = useNavigate();
+  const canEdit = hasRole('warehouse_staff', 'pm');
+  const canDelete = hasRole('admin');
+  const update = useUpdateWorkOrder();
+  const { notify, notifyError } = useToast();
   const [status, setStatus] = useState(null);
   const [showForm, setShowForm] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  // Completed and cancelled are terminal in the API, so only a job still in
+  // play can be cancelled.
+  async function cancelJob(row) {
+    try {
+      await update.mutateAsync({ id: row.id, status: 'cancelled' });
+      notify(`Job #${row.id} cancelled`);
+    } catch (err) {
+      notifyError(err);
+    }
+  }
   // with_costs is opt-in because the roll-up is four aggregates per job; this
   // list is the one place a manager wants them, so it asks.
   const workOrders = useWorkOrders({ with_costs: 'true', ...(status ? { status } : {}) });
@@ -194,6 +317,26 @@ export function WorkOrdersPage() {
       header: 'Cost',
       numeric: true,
       render: (row) => formatMoney(row.costs?.total),
+    },
+    {
+      key: 'actions',
+      header: '',
+      render: (row) => (
+        <RowMenu
+          label={`Actions for job #${row.id}`}
+          items={[
+            { label: 'Open', onSelect: () => navigate(`/work-orders/${row.id}`) },
+            { label: 'Edit details', hidden: !canEdit, onSelect: () => setEditing(row) },
+            {
+              label: 'Cancel job',
+              hidden: !canEdit || !['open', 'in_progress'].includes(row.status),
+              disabled: update.isPending,
+              onSelect: () => cancelJob(row),
+            },
+            { label: 'Delete…', danger: true, hidden: !canDelete, onSelect: () => setDeleting(row) },
+          ]}
+        />
+      ),
     },
   ];
 
@@ -263,6 +406,8 @@ export function WorkOrdersPage() {
       )}
 
       {showForm ? <WorkOrderFormDialog onClose={() => setShowForm(false)} /> : null}
+      {editing ? <EditJobDialog job={editing} onClose={() => setEditing(null)} /> : null}
+      {deleting ? <DeleteJobDialog job={deleting} onClose={() => setDeleting(null)} /> : null}
     </div>
   );
 }

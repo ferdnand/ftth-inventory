@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import {
   useCreateLocation,
+  useDeleteLocation,
   useLocations,
   useStockByLocation,
   useUpdateLocation,
@@ -11,6 +12,8 @@ import {
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { RowMenu } from '../components/RowMenu';
 import { Select, TextInput } from '../components/fields';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
@@ -125,15 +128,67 @@ function LocationFormDialog({ onClose, existing }) {
   );
 }
 
+function DeleteLocationDialog({ location, onClose }) {
+  const remove = useDeleteLocation();
+  const { notify, notifyError } = useToast();
+
+  async function onConfirm() {
+    try {
+      await remove.mutateAsync(location.id);
+      notify(`${location.name} deleted`);
+    } catch (err) {
+      // A 409 means it has history; its message says to retire it instead.
+      notifyError(err);
+    }
+    onClose();
+  }
+
+  return (
+    <ConfirmDialog
+      title={`Delete ${location.name}?`}
+      confirmLabel="Delete permanently"
+      pendingLabel="Deleting…"
+      pending={remove.isPending}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    >
+      <p>
+        This removes the location for good and cannot be undone. It only works for a location
+        that never held stock, was never part of a movement or restock request, and has nobody
+        assigned to it.
+      </p>
+      <p>
+        Otherwise use <strong>Retire</strong> — it leaves the pickers but its history stays, and
+        you can restore it later.
+      </p>
+    </ConfirmDialog>
+  );
+}
+
 export function LocationsPage() {
   const { hasRole } = useAuth();
   const navigate = useNavigate();
-  const locations = useLocations();
+  const canEdit = hasRole('warehouse_staff', 'pm');
+  const canDelete = hasRole('admin');
+  // Editors also see retired locations, otherwise there is nothing to restore.
+  const locations = useLocations(undefined, { includeInactive: canEdit });
   const totals = useStockByLocation();
+  const update = useUpdateLocation();
+  const { notify, notifyError } = useToast();
   const [type, setType] = useState(null);
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
-  const canEdit = hasRole('warehouse_staff', 'pm');
+  const [deleting, setDeleting] = useState(null);
+
+  async function toggleActive(row) {
+    try {
+      await update.mutateAsync({ id: row.id, is_active: !row.is_active });
+      notify(row.is_active ? `${row.name} retired` : `${row.name} restored`);
+    } catch (err) {
+      // A location that still holds stock answers 409 and says what to move.
+      notifyError(err);
+    }
+  }
 
   const totalsById = new Map((totals.data ?? []).map((t) => [t.location_id, t]));
   const rows = (locations.data ?? []).filter((l) => !type || l.type === type);
@@ -172,20 +227,33 @@ export function LocationsPage() {
     ...(canEdit
       ? [
           {
+            key: 'status',
+            header: 'Status',
+            render: (row) =>
+              row.is_active ? <Badge variant="installed">Active</Badge> : <Badge>Retired</Badge>,
+          },
+          {
             key: 'actions',
             header: '',
+            // RowMenu stops propagation itself: the row opens the stock view.
             render: (row) => (
-              <button
-                type="button"
-                className="btn-secondary"
-                onClick={(event) => {
-                  // The row itself opens the stock view.
-                  event.stopPropagation();
-                  setEditing(row);
-                }}
-              >
-                Edit
-              </button>
+              <RowMenu
+                label={`Actions for ${row.name}`}
+                items={[
+                  { label: 'Edit', onSelect: () => setEditing(row) },
+                  {
+                    label: row.is_active ? 'Retire' : 'Restore',
+                    onSelect: () => toggleActive(row),
+                    disabled: update.isPending,
+                  },
+                  {
+                    label: 'Delete…',
+                    danger: true,
+                    hidden: !canDelete,
+                    onSelect: () => setDeleting(row),
+                  },
+                ]}
+              />
             ),
           },
         ]
@@ -245,6 +313,7 @@ export function LocationsPage() {
       {editing ? (
         <LocationFormDialog existing={editing} onClose={() => setEditing(null)} />
       ) : null}
+      {deleting ? <DeleteLocationDialog location={deleting} onClose={() => setDeleting(null)} /> : null}
     </div>
   );
 }
