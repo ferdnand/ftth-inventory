@@ -98,11 +98,28 @@ Applying 010_admin_role.sql ... ok
 Applying 011_sites_and_premises_capture.sql ... ok
 Applying 012_jobs.sql ... ok
 Applying 013_job_costing.sql ... ok
-Applied 13 migration(s).
+Applying 014_location_active.sql ... ok
+Applying 015_job_site.sql ... ok
+Applying 016_hotspots_and_former_clients.sql ... ok
+Applied 16 migration(s).
 ```
 
 This works the same in PowerShell, cmd.exe and bash. Run it again and it says
 `Database is up to date` — it is safe to re-run.
+
+> **Run `npm run migrate` every time you pull.** A new feature that adds a column
+> (a job's site, a premises' connection type) ships with a numbered migration, and
+> the code assumes the column is there. Until you migrate, the API cannot read the
+> table and the screens that depend on it come up **blank** — the jobs and
+> premises pages did exactly this after migrations 015 and 016. To see whether
+> you are behind:
+>
+> ```bash
+> npm run migrate -w apps/api -- status    # PENDING lines are not applied yet
+> ```
+>
+> The test suite does not catch this, because it migrates its own throwaway
+> database on every run. Your development database only changes when you do.
 
 > **Already have a database from the old `db/schema.sql`?** Run
 > `npm run migrate -w apps/api -- baseline 1` first, then `npm run migrate`.
@@ -1297,6 +1314,7 @@ happens anyway, `npm run create-admin -w apps/api` on the server is the way back
 | Symptom | Cause | Fix |
 |---|---|---|
 | `DATABASE_URL is not set` on startup | No `apps/api/.env` | `cp apps/api/.env.example apps/api/.env` and fill it in |
+| Jobs or premises screens are blank, or the API answers 500 with `column … does not exist` | The database is behind the code — a migration is pending | `npm run migrate -w apps/api -- status`, then `npm run migrate`; restart the API if it does not pick the change up |
 | `type "tracking_type_enum" already exists` during migrate | Database predates the migration runner | `npm run migrate -w apps/api -- baseline 1`, then `npm run migrate` |
 | `Migration … contents have changed` | An applied migration was edited | Revert the edit; add a **new** numbered migration |
 | `Send an Authorization: Bearer <token> header` | No token | Sign in; get one from `POST /api/auth/login` |
