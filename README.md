@@ -19,7 +19,7 @@ Three apps in one npm workspace:
 |---|---|---|
 | `apps/api` | Express 4 + PostgreSQL, JWT auth | both clients |
 | `apps/web` | React 19 + Vite, TanStack Query, Recharts | warehouse staff, project managers |
-| `apps/mobile` | Expo SDK 57 + expo-router | field techs |
+| `apps/mobile` | Expo SDK 58 + expo-router | field techs |
 
 ## Documentation
 

@@ -23,8 +23,11 @@ config.resolver.nodeModulesPaths = [
   path.resolve(projectRoot, 'node_modules'),
   path.resolve(workspaceRoot, 'node_modules'),
 ];
-// Without this, Metro walks up the tree on its own and can pick a second copy
-// of react out of a nested node_modules.
-config.resolver.disableHierarchicalLookup = true;
+// Do NOT set resolver.disableHierarchicalLookup = true here. As of SDK 58 npm
+// installs expo-modules-core nested inside node_modules/expo, and disabling the
+// hierarchical lookup stops Metro from finding it ("Unable to resolve
+// expo-modules-core"). The duplicate-react risk it guarded against is handled by
+// keeping one react/react-native version across the workspace (`npm dedupe`;
+// `npm ls react react-native` should show a single copy of each).
 
 module.exports = config;

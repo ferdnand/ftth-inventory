@@ -30,7 +30,7 @@ The project is a three-app monorepo:
 | DB driver | `pg` (connection pool), no ORM |
 | Auth | JWT (`jsonwebtoken`) + `bcryptjs` |
 | Web | React 19, Vite 5, react-router-dom 6, TanStack Query 5, Recharts 3 |
-| Mobile | Expo SDK 57, expo-router, TanStack Query 5, expo-secure-store |
+| Mobile | Expo SDK 58, expo-router, TanStack Query 5, expo-secure-store |
 | Tests | `node:test` (API only), against a real Postgres |
 | Package manager | **npm workspaces** (`package-lock.json` is the lockfile — do not add `yarn.lock`) |
 | Language | Plain JavaScript everywhere. No TypeScript. |
@@ -47,7 +47,7 @@ Each app can adopt it later independently; the API is the one that should not.
 
 ### Why React 19 everywhere
 
-Expo SDK 57 pins `react@19.2.3`. The dashboard is on the same exact version so
+Expo SDK 58 pins `react@19.3.0`. The dashboard is on the same exact version so
 npm hoists **one** copy to the repo root. Two React majors in one workspace makes
 npm nest a second copy per app, and a nested `react` is the classic cause of
 Metro resolving two copies and React's dispatcher coming back `null`. If you bump
@@ -56,6 +56,29 @@ one, bump both:
 ```bash
 node -e "const r=require('./apps/mobile/package.json').dependencies.react;console.log('mobile react',r)"
 ```
+
+`npm ls react react-native` should list a single version of each. After any Expo
+upgrade run `npm dedupe` — a stale hoisted `react-native` at the root alongside
+the app's own copy is the same failure in a different package.
+
+### Upgrading the Expo SDK
+
+`npx expo install expo@^N` fails on npm 11 (the CLI passes `--allow-scripts`,
+which npm rejects in project installs). Instead:
+
+```bash
+npm install expo@^N -w @ftth/mobile
+npx expo install --check              # lists the versions SDK N expects
+npm install -w @ftth/mobile <each package@version it lists>
+npm install -w @ftth/web react@<same> react-dom@<same>
+npm dedupe
+cd apps/mobile && npx expo-doctor
+npx expo export --platform android --platform ios --output-dir <tmp>
+```
+
+The export is the real test: `expo-doctor` and `--check` both passed once while
+Metro could not resolve `expo-modules-core`. `apps/mobile/metro.config.js` must
+not set `resolver.disableHierarchicalLookup`, for the same reason.
 
 ---
 
