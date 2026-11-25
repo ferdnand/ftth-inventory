@@ -343,7 +343,7 @@ router.get(
     // number of labour lines on the same job.
     const result = await db.query(
       `WITH per_job AS (
-         SELECT wo.id, wo.type, cp.site_id,
+         SELECT wo.id, wo.type, wo.site_id,
                 coalesce(wo.assigned_tech_id, wo.created_by) AS tech_id,
                 ${JOB_WORK_DAY} AS work_day,
                 (SELECT coalesce(SUM(jm.quantity * jm.unit_cost), 0)

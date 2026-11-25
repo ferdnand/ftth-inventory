@@ -178,6 +178,16 @@ router.patch(
       params
     );
 
+    // A job is at the same site as its premises (trg_job_site_matches_premises),
+    // so re-filing the premises re-files the jobs at it — otherwise every later
+    // edit to one of those jobs would be refused by the trigger.
+    if ('site_id' in values) {
+      await db.query('UPDATE work_orders SET site_id = $1 WHERE customer_premises_id = $2', [
+        values.site_id,
+        id,
+      ]);
+    }
+
     const full = await db.query(`${PREMISES_SELECT} WHERE cp.id = $1`, [id]);
     res.json({ premises: shapePremises(full.rows[0]) });
   })

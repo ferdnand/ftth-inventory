@@ -90,10 +90,10 @@ export const useTransactions = (params, options = {}) =>
 
 // --- Premises -------------------------------------------------------------
 
-export const usePremisesSearch = (query) =>
+export const usePremisesSearch = (query, siteId) =>
   useQuery({
-    queryKey: keys.premisesSearch(query),
-    queryFn: () => api.searchPremises(query),
+    queryKey: keys.premisesSearch(query, siteId),
+    queryFn: ({ signal }) => api.searchPremises(query, signal, siteId),
     select: (data) => data.results,
     // The API returns { results: [] } with a 200 under 2 characters, and the UI
     // renders a hint rather than an empty state — so don't even ask.
@@ -142,11 +142,12 @@ export const useWorkOrder = (id) =>
 
 // The premises at one site, for the pickers that cannot rely on a search term:
 // most compounds here have no address anybody would type.
-export const usePremisesList = (params) =>
+export const usePremisesList = (params, options = {}) =>
   useQuery({
     queryKey: keys.premisesList(params),
     queryFn: () => api.premisesList(params),
     select: (data) => data.premises,
+    ...options,
   });
 
 // The two sites, as `locations` of type 'site'. Reference data, cached hard.

@@ -20,6 +20,13 @@ const MOVEMENTS = [
   { value: 'faulty', label: 'Faulty — flag a unit as broken' },
 ];
 
+let lineSeq = 0;
+const newLine = () => ({ key: ++lineSeq, itemId: '', quantity: '', error: null });
+
+// Several items in one go. Each line is its own request (the API moves one item
+// at a time and takes a row lock per item), so a line that cannot be moved —
+// say another operator just drew the stock down — stays on the form with its
+// reason, while the lines that did move are cleared away.
 function BulkTransfer({ locations, workOrders, initialFrom }) {
   const create = useCreateTransaction();
   const { notify, notifyError } = useToast();
@@ -27,46 +34,80 @@ function BulkTransfer({ locations, workOrders, initialFrom }) {
   const [type, setType] = useState('transfer');
   const [fromId, setFromId] = useState(initialFrom ?? '');
   const [toId, setToId] = useState('');
-  const [itemId, setItemId] = useState('');
-  const [quantity, setQuantity] = useState('');
+  const [lines, setLines] = useState(() => [newLine()]);
   const [workOrderId, setWorkOrderId] = useState('');
   const [notes, setNotes] = useState('');
 
   const sourceStock = useStock(fromId ? Number(fromId) : null);
   const bulkRows = sourceStock.data?.bulk ?? [];
-  const row = bulkRows.find((r) => String(r.item_id) === itemId);
+  const rowFor = (itemId) => bulkRows.find((r) => String(r.item_id) === itemId);
 
   const needsDestination = type === 'transfer' || type === 'return';
-  const amount = Number(quantity);
-  const overdrawn = row && amount > row.quantity;
 
-  const ready =
-    fromId &&
-    itemId &&
-    amount > 0 &&
-    !overdrawn &&
-    (!needsDestination || (toId && toId !== fromId));
+  const updateLine = (key, patch) =>
+    setLines((current) =>
+      current.map((line) => (line.key === key ? { ...line, ...patch, error: null } : line))
+    );
+  const removeLine = (key) =>
+    setLines((current) =>
+      current.length === 1 ? [newLine()] : current.filter((l) => l.key !== key)
+    );
+
+  // null when the line can be sent, otherwise why it cannot. 'incomplete' is the
+  // quiet case — nothing to flag yet, the line just is not finished.
+  const lineProblem = (line) => {
+    const row = rowFor(line.itemId);
+    const amount = Number(line.quantity);
+    if (!row || !(amount > 0)) return 'incomplete';
+    if (amount > row.quantity) return `Only ${row.quantity} ${row.unit_of_measure} on hand`;
+    return null;
+  };
+  const filled = lines.filter((l) => l.itemId || l.quantity);
+  const everyLineValid = filled.length > 0 && filled.every((l) => lineProblem(l) === null);
+  const ready = fromId && everyLineValid && (!needsDestination || (toId && toId !== fromId));
 
   async function onSubmit(event) {
     event.preventDefault();
-    try {
-      await create.mutateAsync({
-        item_id: Number(itemId),
-        quantity: amount,
-        from_location_id: Number(fromId),
-        to_location_id: needsDestination ? Number(toId) : undefined,
-        type,
-        work_order_id: workOrderId ? Number(workOrderId) : undefined,
-        notes: notes.trim() || undefined,
-        idempotency_key: newIdempotencyKey(),
-      });
-      notify(`Moved ${amount} ${row?.unit_of_measure ?? ''} of ${row?.item_name ?? 'stock'}`);
-      setQuantity('');
+    const outcomes = [];
+
+    for (const line of filled) {
+      try {
+        await create.mutateAsync({
+          item_id: Number(line.itemId),
+          quantity: Number(line.quantity),
+          from_location_id: Number(fromId),
+          to_location_id: needsDestination ? Number(toId) : undefined,
+          type,
+          work_order_id: workOrderId ? Number(workOrderId) : undefined,
+          notes: notes.trim() || undefined,
+          idempotency_key: newIdempotencyKey(),
+        });
+        outcomes.push({ key: line.key, ok: true });
+      } catch (err) {
+        outcomes.push({ key: line.key, ok: false, message: err.message });
+      }
+    }
+
+    const moved = outcomes.filter((o) => o.ok).length;
+    const failed = outcomes.filter((o) => !o.ok);
+
+    // Keep only what still needs doing, each failed line carrying its reason.
+    setLines((current) => {
+      const kept = current
+        .filter((l) => failed.some((f) => f.key === l.key))
+        .map((l) => ({ ...l, error: failed.find((f) => f.key === l.key).message }));
+      return kept.length > 0 ? kept : [newLine()];
+    });
+
+    if (moved > 0) notify(`Moved ${moved} item${moved === 1 ? '' : 's'}`);
+    if (failed.length > 0) {
+      notifyError(`${failed.length} item${failed.length === 1 ? '' : 's'} could not be moved`);
+    } else {
       setNotes('');
-    } catch (err) {
-      notifyError(err);
     }
   }
+
+  const chosenIds = new Set(lines.map((l) => l.itemId).filter(Boolean));
 
   return (
     <form className="form-card" onSubmit={onSubmit}>
@@ -79,7 +120,7 @@ function BulkTransfer({ locations, workOrders, initialFrom }) {
           value={fromId}
           onChange={(v) => {
             setFromId(v);
-            setItemId('');
+            setLines([newLine()]);
           }}
           placeholder="Choose a source"
           options={locations.map((l) => ({ value: String(l.id), label: l.name }))}
@@ -106,33 +147,69 @@ function BulkTransfer({ locations, workOrders, initialFrom }) {
         <EmptyState title="That location holds no bulk stock" />
       ) : (
         <>
-          <Select
-            id="item"
-            label="Item"
-            value={itemId}
-            onChange={setItemId}
-            placeholder="Choose an item"
-            options={bulkRows.map((r) => ({
-              value: String(r.item_id),
-              label: `${r.item_name} — ${r.quantity} ${r.unit_of_measure} on hand`,
-            }))}
-          />
+          <div className="section-label">Items to move</div>
+          {lines.map((line, index) => {
+            const row = rowFor(line.itemId);
+            const amount = Number(line.quantity);
+            const problem = lineProblem(line);
+            const overdrawn = problem && problem !== 'incomplete';
+            return (
+              <div className="card flat" key={line.key}>
+                <div className="field-row">
+                  <Select
+                    id={`item-${line.key}`}
+                    label={index === 0 ? 'Item' : `Item ${index + 1}`}
+                    value={line.itemId}
+                    onChange={(v) => updateLine(line.key, { itemId: v })}
+                    placeholder="Choose an item"
+                    options={bulkRows
+                      .filter(
+                        (r) => String(r.item_id) === line.itemId || !chosenIds.has(String(r.item_id))
+                      )
+                      .map((r) => ({
+                        value: String(r.item_id),
+                        label: `${r.item_name} — ${r.quantity} ${r.unit_of_measure} on hand`,
+                      }))}
+                  />
+                  <NumberInput
+                    id={`quantity-${line.key}`}
+                    label={`Quantity${row ? ` (${row.unit_of_measure})` : ''}`}
+                    value={line.quantity}
+                    onChange={(v) => updateLine(line.key, { quantity: v })}
+                    min="0"
+                    step="any"
+                    max={row ? String(row.quantity) : undefined}
+                    error={overdrawn ? problem : (line.error ?? undefined)}
+                    hint={
+                      row && amount > 0 && !overdrawn
+                        ? `${row.item_name}: ${row.quantity} → ${row.quantity - amount} ${row.unit_of_measure}`
+                        : undefined
+                    }
+                  />
+                </div>
+                {lines.length > 1 || line.itemId ? (
+                  <button
+                    type="button"
+                    className="btn-secondary btn-sm"
+                    onClick={() => removeLine(line.key)}
+                  >
+                    Remove
+                  </button>
+                ) : null}
+              </div>
+            );
+          })}
 
-          <NumberInput
-            id="quantity"
-            label={`Quantity${row ? ` (${row.unit_of_measure})` : ''}`}
-            value={quantity}
-            onChange={setQuantity}
-            min="0"
-            step="any"
-            max={row ? String(row.quantity) : undefined}
-            error={overdrawn ? `Only ${row.quantity} ${row.unit_of_measure} on hand` : undefined}
-            hint={
-              row && amount > 0 && !overdrawn
-                ? `${row.item_name}: ${row.quantity} → ${row.quantity - amount} ${row.unit_of_measure}`
-                : undefined
-            }
-          />
+          {chosenIds.size < bulkRows.length ? (
+            <button
+              type="button"
+              className="btn-secondary btn-sm"
+              style={{ marginBottom: 14 }}
+              onClick={() => setLines((current) => [...current, newLine()])}
+            >
+              + Add another item
+            </button>
+          ) : null}
         </>
       )}
 
@@ -150,7 +227,9 @@ function BulkTransfer({ locations, workOrders, initialFrom }) {
       <TextInput id="notes" label="Notes" value={notes} onChange={setNotes} />
 
       <button type="submit" className="btn-primary" disabled={!ready || create.isPending}>
-        {create.isPending ? 'Moving…' : 'Record movement'}
+        {create.isPending
+          ? 'Moving…'
+          : `Record movement${filled.length > 1 ? ` (${filled.length} items)` : ''}`}
       </button>
     </form>
   );

@@ -177,7 +177,11 @@ async function getStock({ itemId, locationId }) {
 async function createPremises(fields = '1 Test Road') {
   // A string is the common case ("just give me a premises"); an object is for
   // the tests that care about GPS, a site or a village.
-  const body = typeof fields === 'string' ? { address: fields } : fields;
+  const body = typeof fields === 'string' ? { address: fields } : { ...fields };
+  // Every job has to be at a site (015), and a job takes its premises' site when
+  // the request does not name one. Default to Bungoma so a test that just wants
+  // a premises gets one a job can be opened against.
+  if (!('site_id' in body)) body.site_id = await siteId('Bungoma');
   const columns = Object.keys(body);
   const result = await db.query(
     `INSERT INTO customer_premises (${columns.join(', ')})
@@ -200,8 +204,10 @@ async function createJob({
 }) {
   const result = await db.query(
     `INSERT INTO work_orders
-       (customer_premises_id, type, status, assigned_tech_id, created_by, performed_on)
-     VALUES ($1, $2, $3, $4, $5, $6)
+       (customer_premises_id, site_id, type, status, assigned_tech_id, created_by, performed_on)
+     SELECT cp.id, cp.site_id, $2::work_order_type_enum, $3::work_order_status_enum,
+            $4::int, $5::int, $6::date
+       FROM customer_premises cp WHERE cp.id = $1
      RETURNING *`,
     [premisesId, type, status, techId, createdBy, performedOn]
   );

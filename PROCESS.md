@@ -279,7 +279,9 @@ What is covered, in rough order of importance:
 | Migrations | `up` is idempotent; an edited applied migration fails its checksum |
 | Jobs | A tech can open their own job, cannot dispatch to another tech, and sees only their own |
 | Job + premises | A job and a premises are created in one transaction, and an unfindable premises rolls the job back with it |
-| Materials | Recording draws stock down; re-sending the identical list moves nothing; a correction returns the difference to the van it came from |
+| Materials | Recording draws stock down; re-sending the identical list moves nothing; a correction returns the difference to the stock it came from |
+| Materials | With no `from_location_id`, materials come out of the **job's site**; a tech may use their own van or the job's site and nothing else |
+| Job sites | A job takes its premises' site, refuses a different one, files an un-sited premises under the job's site, and is listable per site |
 | Materials | A serialized item is refused as a material, by the route **and** by `trg_job_material_is_bulk` |
 | Costs | The total is the four buckets summed, and unpriced lines are counted rather than treated as free |
 | Costs | A line's own cost beats the catalog and survives a re-pricing |
@@ -387,12 +389,24 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 - **`PUT /api/work-orders/:id/materials` moves stock by the DIFFERENCE.** This is
   the one place the complete-list rule does real work: the handler reads the
   existing lines, works out a per-item delta, and moves only that. Raise a line
-  and the extra leaves the van; lower it and the difference goes back; drop it
+  and the extra leaves the source; lower it and the difference goes back; drop it
   and all of it does. Re-sending an identical list moves nothing, which is
   exactly the retry case. A line records the location it was drawn from
   (`job_materials.from_location_id`) rather than deriving it, so a correction
-  next week returns stock to the van that supplied it and not to whichever van
-  the tech drives by then.
+  next week returns stock to the place that supplied it and not to wherever the
+  person editing is working by then.
+
+- **A job belongs to a site, and its materials come out of that site's stock.**
+  `work_orders.site_id` (015) is the job's own site; a site is a `location`, so
+  it holds stock like a warehouse or a van. `PUT .../materials` draws from the
+  job's site unless `from_location_id` names another source, and a field tech
+  may name only their own van or the job's site. Because of that, field techs may
+  now read `GET /api/stock?location_id=` for **any site** (not other vans or
+  warehouses) — see `assertStockReadable`. `POST /api/work-orders` takes a
+  `site_id`, or inherits the premises' site, and refuses a job with neither; a
+  premises with no site is filed under the job's, and a mismatch is a 400 (and,
+  underneath, the `trg_job_site_matches_premises` trigger). Re-filing a premises
+  under another site re-files its jobs with it.
 
 - **Consumption is booked as `install` and a correction as `return`.** A material
   consumed on a job left the van and went into a customer premises, which is what
@@ -599,10 +613,14 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 012_jobs.sql    The job becomes the record: created_by,
 │   │   │   │   │                   performed_on, installations.work_order_id
 │   │   │   │   │                   NOT NULL (backfilled)
-│   │   │   │   └── 013_job_costing.sql
-│   │   │   │                       job_materials / job_services / job_expenses,
-│   │   │   │                       items.unit_cost, services.unit_rate.
-│   │   │   │                       installation_services folds into job_services
+│   │   │   │   ├── 013_job_costing.sql
+│   │   │   │   │                   job_materials / job_services / job_expenses,
+│   │   │   │   │                   items.unit_cost, services.unit_rate.
+│   │   │   │   │                   installation_services folds into job_services
+│   │   │   │   ├── 014_location_active.sql  Retiring a location
+│   │   │   │   └── 015_job_site.sql
+│   │   │   │                       work_orders.site_id (backfilled from the
+│   │   │   │                       premises) + a trigger keeping it in step
 │   │   │   ├── create-admin.js     Bootstrap/recover an admin (no API needed)
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
@@ -799,14 +817,21 @@ Recorded here so they are not rediscovered.
   and Kisumu are inserted by `011_sites_and_premises_capture.sql`, not seeded, so
   a deployed database has them. A third site is an `INSERT INTO locations`; the
   `SITE_NAMES` arrays in the three `constants.js` files exist only so a client
-  can label one without a round trip. Nothing enforces that a premises has a
-  site — a compound captured in a hurry can be filed later.
+  can label one without a round trip. A *premises* may still have no site (a
+  compound captured in a hurry can be filed later), but a new *job* may not:
+  it needs a site to draw materials from, so opening one files the premises.
 - **The GPS pin is a point, with no map.** Neither client renders a map or
   navigates to a fix: the field app shows the coordinates and an accuracy
   verdict, and the dashboard shows the numbers. A map tile layer is a network
   dependency in places that have none, and the number is what a tech reads out
   over a phone. `gps_accuracy_m` is recorded so a bad fix can be told from a
   good one; nothing refuses a bad one, because a rough pin beats no pin.
+- **Multi-item transfers are several requests, not one transaction.** The
+  Transfer page's bulk tab takes any number of item/quantity lines and sends one
+  `POST /api/transactions` per line (as the serialized tab already did per unit),
+  so one line failing — say the stock was just drawn down — leaves the others
+  moved and keeps only the failed lines on the form, each with its reason. A
+  single all-or-nothing endpoint is the obvious next step if that proves too loose.
 - **No geographic search.** "Premises near me" would need PostGIS or a bounding
   box, and the fallback that exists — browse the site's list — is short enough at
   two sites' worth of premises. `GET /api/premises?site_id=` caps at 500.

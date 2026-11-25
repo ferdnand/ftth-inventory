@@ -42,8 +42,14 @@ after(async () => {
 });
 
 const openJob = (body, as = world.tech) => h.api.post('/api/work-orders', { as, body });
-const putMaterials = (id, materials, as = world.tech) =>
-  h.api.put(`/api/work-orders/${id}/materials`, { as, body: { materials } });
+// Most of the material tests are about quantities, not about where the stock is,
+// so they draw from the van explicitly. The default — the job's site — has its
+// own tests further down.
+const putMaterials = (id, materials, as = world.tech, fromLocationId = world.van.id) =>
+  h.api.put(`/api/work-orders/${id}/materials`, {
+    as,
+    body: { materials, from_location_id: fromLocationId },
+  });
 const putExpenses = (id, expenses, as = world.tech) =>
   h.api.put(`/api/work-orders/${id}/expenses`, { as, body: { expenses } });
 const putJobServices = (id, services, as = world.tech) =>
@@ -570,4 +576,175 @@ test('the job-cost report splits spend by site and flags what is unpriced', asyn
 test('a field tech cannot read the job-cost report', async () => {
   const res = await h.api.get('/api/reports/job-costs', { as: world.tech });
   assert.equal(res.status, 403);
+});
+
+// --- Sites ----------------------------------------------------------------
+
+test('a job takes the site its premises is filed under', async () => {
+  const res = await openJob({ customer_premises_id: world.premises.id, type: 'repair' });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.work_order.site_name, 'Bungoma');
+  assert.equal(res.body.work_order.site_id, await h.siteId('Bungoma'));
+});
+
+test('a job at a premises with no site is refused until a site is named', async () => {
+  const unsited = await h.createPremises({ landmark: 'By the old mill', site_id: null });
+
+  const without = await openJob({ customer_premises_id: unsited.id, type: 'repair' });
+  assert.equal(without.status, 400);
+  assert.match(without.body.error, /site_id is required/);
+
+  const kisumu = await h.siteId('Kisumu');
+  const withSite = await openJob({
+    customer_premises_id: unsited.id,
+    site_id: kisumu,
+    type: 'repair',
+  });
+  assert.equal(withSite.status, 201);
+  assert.equal(withSite.body.work_order.site_name, 'Kisumu');
+
+  // The premises is filed under the job's site, so a site's list finds it.
+  const filed = await h.api.get(`/api/premises/${unsited.id}`, { as: world.tech });
+  assert.equal(filed.body.premises.site_id, kisumu);
+});
+
+test('a job cannot be at a different site from its premises', async () => {
+  const kisumu = await h.siteId('Kisumu');
+  const res = await openJob({
+    customer_premises_id: world.premises.id, // Bungoma
+    site_id: kisumu,
+    type: 'repair',
+  });
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /Bungoma/);
+});
+
+test('a new premises is filed under the site the job is opened at', async () => {
+  const kisumu = await h.siteId('Kisumu');
+  const res = await openJob({
+    type: 'new_install',
+    site_id: kisumu,
+    premises: { landmark: 'Opposite the dispensary', village: 'Kadibo' },
+  });
+
+  assert.equal(res.status, 201);
+  assert.equal(res.body.work_order.site_id, kisumu);
+  assert.equal(res.body.work_order.premises.site_id, kisumu);
+});
+
+test('a new premises with no site anywhere is refused', async () => {
+  const res = await openJob({
+    type: 'new_install',
+    premises: { landmark: 'Opposite the dispensary' },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /site_id is required/);
+});
+
+test('jobs can be listed for one site', async () => {
+  const kisumu = await h.siteId('Kisumu');
+  const kisumuHouse = await h.createPremises({ landmark: 'By the lake', site_id: kisumu });
+  await openJob({ customer_premises_id: world.premises.id, type: 'repair' });
+  await openJob({ customer_premises_id: kisumuHouse.id, type: 'repair' });
+
+  const res = await h.api.get(`/api/work-orders?site_id=${kisumu}`, { as: world.staff });
+  assert.equal(res.status, 200);
+  assert.equal(res.body.work_orders.length, 1);
+  assert.equal(res.body.work_orders[0].site_name, 'Kisumu');
+});
+
+test('re-filing a premises under another site moves its jobs with it', async () => {
+  const job = (await openJob({ customer_premises_id: world.premises.id, type: 'repair' })).body
+    .work_order;
+  const kisumu = await h.siteId('Kisumu');
+
+  const moved = await h.api.patch(`/api/premises/${world.premises.id}`, {
+    as: world.staff,
+    body: { site_id: kisumu },
+  });
+  assert.equal(moved.status, 200);
+
+  const after = await getJob(job.id, world.staff);
+  assert.equal(after.body.work_order.site_id, kisumu);
+});
+
+// --- Materials come out of the job's site ---------------------------------
+
+test('materials default to the stock at the job’s site', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  await h.setStock({ itemId: world.cable.id, locationId: bungoma, quantity: 300 });
+  const job = (await openJob({ customer_premises_id: world.premises.id, type: 'new_install' }))
+    .body.work_order;
+
+  // No from_location_id: the job's site is the source.
+  const res = await h.api.put(`/api/work-orders/${job.id}/materials`, {
+    as: world.tech,
+    body: { materials: [{ item_id: world.cable.id, quantity: 40 }] },
+  });
+
+  assert.equal(res.status, 200);
+  assert.equal(res.body.materials[0].from_location_id, bungoma);
+  assert.equal(await h.getStock({ itemId: world.cable.id, locationId: bungoma }), 260);
+  assert.equal(await vanStock(world.cable.id), 500); // the van is untouched
+});
+
+test('a job cannot use more than its site holds', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  await h.setStock({ itemId: world.cable.id, locationId: bungoma, quantity: 30 });
+  const job = (await openJob({ customer_premises_id: world.premises.id, type: 'new_install' }))
+    .body.work_order;
+
+  const res = await h.api.put(`/api/work-orders/${job.id}/materials`, {
+    as: world.tech,
+    body: { materials: [{ item_id: world.cable.id, quantity: 40 }] },
+  });
+
+  assert.equal(res.status, 409);
+  assert.equal(await h.getStock({ itemId: world.cable.id, locationId: bungoma }), 30);
+});
+
+test('a tech cannot record materials out of a different site', async () => {
+  const kisumu = await h.siteId('Kisumu');
+  await h.setStock({ itemId: world.cable.id, locationId: kisumu, quantity: 300 });
+  const job = (await openJob({ customer_premises_id: world.premises.id, type: 'new_install' }))
+    .body.work_order; // a Bungoma job
+
+  const res = await h.api.put(`/api/work-orders/${job.id}/materials`, {
+    as: world.tech,
+    body: { from_location_id: kisumu, materials: [{ item_id: world.cable.id, quantity: 10 }] },
+  });
+  assert.equal(res.status, 403);
+});
+
+test('a correction puts material back at the site it came from', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  await h.setStock({ itemId: world.cable.id, locationId: bungoma, quantity: 300 });
+  const job = (await openJob({ customer_premises_id: world.premises.id, type: 'new_install' }))
+    .body.work_order;
+  const siteLines = (quantity) =>
+    h.api.put(`/api/work-orders/${job.id}/materials`, {
+      as: world.tech,
+      body: { materials: [{ item_id: world.cable.id, quantity }] },
+    });
+
+  await siteLines(100);
+  const fixed = await siteLines(60);
+
+  assert.equal(fixed.status, 200);
+  assert.equal(await h.getStock({ itemId: world.cable.id, locationId: bungoma }), 240);
+});
+
+test('a tech can read the stock at a site, but not at another tech’s van', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  await h.setStock({ itemId: world.cable.id, locationId: bungoma, quantity: 300 });
+  const otherVan = await h.createLocation({ name: 'Van 2', type: 'tech_van' });
+
+  const site = await h.api.get(`/api/stock?location_id=${bungoma}`, { as: world.tech });
+  assert.equal(site.status, 200);
+  assert.equal(Number(site.body.bulk[0].quantity), 300);
+
+  const van = await h.api.get(`/api/stock?location_id=${otherVan.id}`, { as: world.tech });
+  assert.equal(van.status, 403);
 });

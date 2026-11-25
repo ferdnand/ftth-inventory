@@ -90,6 +90,19 @@ function assertLocationAccess(user, locationId) {
   }
 }
 
+// Reading stock: a tech's own van, or any site. A job's materials are drawn from
+// the stock at its site, so a tech has to be able to see what a site holds to
+// record anything against it. Other vans and the warehouses stay off limits.
+async function assertStockReadable(user, locationId) {
+  if (!isFieldTech(user)) return;
+  if (Number(locationId) === Number(user.assigned_location_id)) return;
+
+  const result = await db.query('SELECT type FROM locations WHERE id = $1', [locationId]);
+  if (result.rows[0]?.type === 'site') return;
+
+  throw forbidden('Field techs can only access stock at their own assigned location or at a site');
+}
+
 // The van a tech is acting from. A tech with no assigned location cannot move
 // stock at all, which is a configuration problem worth naming clearly.
 function requireAssignedLocation(user) {
@@ -107,5 +120,6 @@ module.exports = {
   isFieldTech,
   isAdmin,
   assertLocationAccess,
+  assertStockReadable,
   requireAssignedLocation,
 };

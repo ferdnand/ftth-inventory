@@ -4,7 +4,9 @@ import { useAuth } from '../auth/AuthContext';
 import {
   useCreateWorkOrder,
   useDeleteWorkOrder,
+  usePremisesList,
   usePremisesSearch,
+  useSites,
   useUpdateWorkOrder,
   useUsers,
   useWorkOrders,
@@ -23,13 +25,16 @@ import { formatDate, formatPremisesCode } from '../lib/format';
 import { formatMoney } from '../lib/money';
 import { WORK_ORDER_STATUSES, WORK_ORDER_TYPES, label } from '../lib/constants';
 
-// Debounced combobox over /premises/search. Extracted because both the work
-// order form and the restock queue need it.
-function PremisesPicker({ value, onChange, error }) {
+// Premises combobox, scoped to the site the job is at. Before anything is typed
+// it lists that site's premises, because most compounds out here have no
+// address anybody would think to search for; typing narrows within the site.
+function PremisesPicker({ siteId, value, onChange, error }) {
   const [term, setTerm] = useState('');
   const debounced = useDebounced(term, 300);
-  const search = usePremisesSearch(debounced);
-  const tooShort = debounced.trim().length < 2;
+  const searching = debounced.trim().length >= 2;
+
+  const search = usePremisesSearch(debounced, siteId);
+  const browse = usePremisesList({ site_id: siteId, limit: 100 }, { enabled: Boolean(siteId) });
 
   if (value) {
     return (
@@ -46,28 +51,42 @@ function PremisesPicker({ value, onChange, error }) {
     );
   }
 
+  if (!siteId) {
+    return (
+      <div className="field">
+        <label>Premises</label>
+        <div className="hint">Choose the site first — the premises list is filtered to it.</div>
+        {error ? <div className="error">{error}</div> : null}
+      </div>
+    );
+  }
+
+  const query = searching ? search : browse;
+  const rows = query.data ?? [];
+
   return (
     <div className="field">
-      <label htmlFor="premises-search">Premises</label>
+      <label htmlFor="premises-search">Premises at this site</label>
       <input
         id="premises-search"
         value={term}
         onChange={(e) => setTerm(e.target.value)}
-        placeholder="Name, village, landmark, phone or account"
+        placeholder="Filter by name, village, landmark, phone or account"
       />
       {error ? <div className="error">{error}</div> : null}
-      {tooShort ? (
-        <div className="hint">Type at least 2 characters.</div>
-      ) : search.isPending ? (
-        <div className="hint">Searching…</div>
-      ) : search.data.length === 0 ? (
+      {query.isPending ? (
+        <div className="hint">Loading…</div>
+      ) : rows.length === 0 ? (
         <div className="hint">
-          No matches. Add the premises under Premises first, or let the tech capture it in the
-          field app when they get there.
+          {searching
+            ? 'No matches at this site. '
+            : 'No premises are recorded at this site yet. '}
+          Add the premises under Premises first, or let the tech capture it in the field app when
+          they get there.
         </div>
       ) : (
-        <div style={{ marginTop: 8 }}>
-          {search.data.slice(0, 6).map((row) => (
+        <div style={{ marginTop: 8, maxHeight: 240, overflowY: 'auto' }}>
+          {rows.map((row) => (
             <div className="result-item" key={row.id} onClick={() => onChange(row)}>
               <div className="addr">{row.label}</div>
               <div className="id">{formatPremisesCode(row.id)}</div>
@@ -85,6 +104,8 @@ function WorkOrderFormDialog({ onClose }) {
   const { notify, notifyError } = useToast();
   const navigate = useNavigate();
 
+  const sites = useSites();
+  const [siteId, setSiteId] = useState('');
   const [premises, setPremises] = useState(null);
   const [type, setType] = useState('new_install');
   const [techId, setTechId] = useState('');
@@ -94,12 +115,17 @@ function WorkOrderFormDialog({ onClose }) {
 
   async function onSubmit(event) {
     event.preventDefault();
+    if (!siteId) {
+      setError('Choose a site');
+      return;
+    }
     if (!premises) {
       setError('Choose a premises');
       return;
     }
     try {
       const { work_order: created } = await create.mutateAsync({
+        site_id: Number(siteId),
         customer_premises_id: premises.id,
         type,
         assigned_tech_id: techId ? Number(techId) : undefined,
@@ -129,7 +155,26 @@ function WorkOrderFormDialog({ onClose }) {
       }
     >
       <form id="wo-form" onSubmit={onSubmit}>
-        <PremisesPicker value={premises} onChange={setPremises} error={error} />
+        <Select
+          id="wo-site"
+          label="Site"
+          value={siteId}
+          onChange={(v) => {
+            setSiteId(v);
+            // The premises list is per site, so one picked under the previous
+            // site no longer applies.
+            setPremises(null);
+            setError(null);
+          }}
+          placeholder="Choose a site"
+          options={(sites.data ?? []).map((s) => ({ value: String(s.id), label: s.name }))}
+        />
+        <PremisesPicker
+          siteId={siteId ? Number(siteId) : null}
+          value={premises}
+          onChange={setPremises}
+          error={error}
+        />
         <Select
           id="wo-type"
           label="Type"
@@ -270,6 +315,8 @@ export function WorkOrdersPage() {
   const update = useUpdateWorkOrder();
   const { notify, notifyError } = useToast();
   const [status, setStatus] = useState(null);
+  const [siteFilter, setSiteFilter] = useState(null);
+  const sites = useSites();
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
@@ -286,7 +333,11 @@ export function WorkOrdersPage() {
   }
   // with_costs is opt-in because the roll-up is four aggregates per job; this
   // list is the one place a manager wants them, so it asks.
-  const workOrders = useWorkOrders({ with_costs: 'true', ...(status ? { status } : {}) });
+  const workOrders = useWorkOrders({
+    with_costs: 'true',
+    ...(status ? { status } : {}),
+    ...(siteFilter ? { site_id: siteFilter } : {}),
+  });
 
   const columns = [
     { key: 'id', header: 'Job', numeric: true, render: (row) => `#${row.id}` },
@@ -296,14 +347,11 @@ export function WorkOrdersPage() {
       render: (row) => (
         <>
           <div className="item-name">{row.label}</div>
-          <div className="item-meta">
-            {[formatPremisesCode(row.customer_premises_id), row.site_name]
-              .filter(Boolean)
-              .join(' · ')}
-          </div>
+          <div className="item-meta">{formatPremisesCode(row.customer_premises_id)}</div>
         </>
       ),
     },
+    { key: 'site_name', header: 'Site', render: (row) => row.site_name ?? '—' },
     { key: 'type', header: 'Type', render: (row) => label(row.type) },
     { key: 'status', header: 'Status', render: (row) => <Badge value={row.status} /> },
     { key: 'assigned_tech_name', header: 'Tech', render: (row) => row.assigned_tech_name ?? '—' },
@@ -354,6 +402,26 @@ export function WorkOrdersPage() {
           ) : null
         }
       />
+
+      <div className="chip-row">
+        <button
+          type="button"
+          className={`chip ${siteFilter === null ? 'active' : ''}`.trim()}
+          onClick={() => setSiteFilter(null)}
+        >
+          All sites
+        </button>
+        {(sites.data ?? []).map((site) => (
+          <button
+            key={site.id}
+            type="button"
+            className={`chip ${siteFilter === site.id ? 'active' : ''}`.trim()}
+            onClick={() => setSiteFilter(site.id)}
+          >
+            {site.name}
+          </button>
+        ))}
+      </div>
 
       <div className="chip-row">
         <button

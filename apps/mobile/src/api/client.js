@@ -125,8 +125,13 @@ export const api = {
   // All three take the COMPLETE list and replace what is there, so a retry on
   // a dying connection cannot double-count. Materials move van stock by the
   // difference, which is why re-sending the same list moves nothing.
-  setJobMaterials: (id, materials) =>
-    request(`/work-orders/${id}/materials`, { method: 'PUT', body: { materials } }),
+  // `fromLocationId` is the stock the materials come out of — the job's site.
+  // Left out, the API falls back to the job's site on its own.
+  setJobMaterials: (id, materials, fromLocationId) =>
+    request(`/work-orders/${id}/materials`, {
+      method: 'PUT',
+      body: { materials, from_location_id: fromLocationId },
+    }),
   setJobServices: (id, services) =>
     request(`/work-orders/${id}/services`, { method: 'PUT', body: { services } }),
   setJobExpenses: (id, expenses) =>

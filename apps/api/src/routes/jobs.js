@@ -30,7 +30,7 @@ const {
   optionalDate,
 } = require('../lib/validate');
 const { WORK_ORDER_TYPES, WORK_ORDER_STATUSES } = require('../lib/constants');
-const { insertPremises, shapePremises } = require('../lib/premises');
+const { insertPremises, shapePremises, assertIsSite } = require('../lib/premises');
 const {
   parseServiceLines,
   writeServiceLines,
@@ -43,7 +43,7 @@ const {
   expenseLinesByJob,
   jobCostSummary,
 } = require('../lib/jobLines');
-const { isFieldTech, requireAssignedLocation, requireRole } = require('../middleware/auth');
+const { isFieldTech, requireRole } = require('../middleware/auth');
 
 // `address` stays in the select for the clients that already read it; `label`
 // is what to show now that a premises may not have one. See premisesLabel.
@@ -51,13 +51,13 @@ const JOB_SELECT = `
   SELECT wo.*,
          cp.address, cp.landmark, cp.village, cp.customer_name, cp.customer_phone,
          cp.customer_account_id, cp.premises_type, cp.notes AS premises_notes,
-         cp.gps_lat, cp.gps_lng, cp.gps_accuracy_m, cp.site_id,
+         cp.gps_lat, cp.gps_lng, cp.gps_accuracy_m,
          site.name AS site_name,
          tech.name AS assigned_tech_name,
          opener.name AS created_by_name
   FROM work_orders wo
   JOIN customer_premises cp ON cp.id = wo.customer_premises_id
-  LEFT JOIN locations site ON site.id = cp.site_id
+  LEFT JOIN locations site ON site.id = wo.site_id
   LEFT JOIN users tech ON tech.id = wo.assigned_tech_id
   LEFT JOIN users opener ON opener.id = wo.created_by
 `;
@@ -112,7 +112,7 @@ function assertJobVisible(user, job) {
 // so two saves of the same job cannot interleave.
 async function loadJob(queryable, id, user, { forUpdate = false } = {}) {
   const result = await queryable.query(
-    `SELECT id, customer_premises_id, status, assigned_tech_id, created_by, performed_on
+    `SELECT id, customer_premises_id, site_id, status, assigned_tech_id, created_by, performed_on
      FROM work_orders WHERE id = $1 ${forUpdate ? 'FOR UPDATE' : ''}`,
     [id]
   );
@@ -176,7 +176,7 @@ router.get(
       );
     }
     if (req.query.site_id) {
-      clauses.push(`cp.site_id = ${push(intId(req.query.site_id, 'site_id'))}`);
+      clauses.push(`wo.site_id = ${push(intId(req.query.site_id, 'site_id'))}`);
     }
     const performedFrom = optionalDate(req.query.performed_from, 'performed_from');
     const performedTo = optionalDate(req.query.performed_to, 'performed_to');
@@ -269,10 +269,16 @@ router.get(
 // ------------------------------------------------------------
 
 // POST /api/work-orders
-// body: { type,
+// body: { type, site_id,
 //         customer_premises_id  |  premises: { address?, customer_name?, village?,
 //                                             landmark?, gps_lat?, gps_lng?, ... },
 //         assigned_tech_id?, scheduled_date?, performed_on?, status?, notes? }
+//
+// Every job belongs to a site. `site_id` may be left out when the premises is
+// already filed under one — the job takes that site — but a job with no site
+// and no premises site to inherit is refused: it would have no stock to draw
+// materials from and would drop out of every per-site total.
+// A premises that has no site yet is filed under the job's, so the two agree.
 //
 // A field tech gets the job assigned to themselves whatever they send: the
 // point of letting them open one is to record work they are doing, and a tech
@@ -287,6 +293,7 @@ router.post(
     const notes = optionalString(req.body.notes, 'notes', 1000);
     const scheduledDate = optionalDate(req.body.scheduled_date, 'scheduled_date');
     const performedOn = optionalDate(req.body.performed_on, 'performed_on');
+    const requestedSiteId = optionalIntId(req.body.site_id, 'site_id');
 
     const hasPremisesId =
       req.body.customer_premises_id !== undefined && req.body.customer_premises_id !== null;
@@ -321,19 +328,60 @@ router.post(
       await client.query('BEGIN');
 
       let premisesId;
-      let premises;
+      let siteId;
       if (hasNewPremises) {
-        if (typeof req.body.premises !== 'object' || Array.isArray(req.body.premises)) {
+        const draft = req.body.premises;
+        if (typeof draft !== 'object' || Array.isArray(draft)) {
           throw badRequest('premises must be an object');
         }
-        premises = shapePremises(await insertPremises(client, req.body.premises, req.user.id));
+
+        const draftSite = optionalIntId(draft.site_id, 'premises.site_id');
+        if (requestedSiteId && draftSite && requestedSiteId !== draftSite) {
+          throw badRequest('The job and the new premises name different sites');
+        }
+        siteId = requestedSiteId ?? draftSite;
+        if (!siteId) throw badRequest('site_id is required — say which site this job is at');
+
+        // The new premises is filed under the job's site, so it shows up in that
+        // site's list the next time anyone browses it.
+        const premises = shapePremises(
+          await insertPremises(client, { ...draft, site_id: siteId }, req.user.id)
+        );
         premisesId = premises.id;
       } else {
         premisesId = intId(req.body.customer_premises_id, 'customer_premises_id');
-        const found = await client.query('SELECT id FROM customer_premises WHERE id = $1', [
-          premisesId,
-        ]);
+        const found = await client.query(
+          `SELECT cp.id, cp.site_id, site.name AS site_name
+           FROM customer_premises cp
+           LEFT JOIN locations site ON site.id = cp.site_id
+           WHERE cp.id = $1
+           FOR UPDATE OF cp`,
+          [premisesId]
+        );
         if (found.rows.length === 0) throw notFound('customer_premises not found');
+        const existing = found.rows[0];
+
+        if (
+          requestedSiteId &&
+          existing.site_id &&
+          Number(existing.site_id) !== requestedSiteId
+        ) {
+          throw badRequest(
+            `That premises is filed under ${existing.site_name}, not the site you chose. ` +
+              'Pick a premises at the job’s site.'
+          );
+        }
+
+        siteId = requestedSiteId ?? existing.site_id;
+        if (!siteId) throw badRequest('site_id is required — say which site this job is at');
+        await assertIsSite(client, siteId);
+
+        if (!existing.site_id) {
+          await client.query('UPDATE customer_premises SET site_id = $1 WHERE id = $2', [
+            siteId,
+            premisesId,
+          ]);
+        }
       }
 
       // A tech opening their own job is recording today's work, so today is the
@@ -344,12 +392,13 @@ router.post(
 
       const created = await client.query(
         `INSERT INTO work_orders
-           (customer_premises_id, type, status, assigned_tech_id, created_by,
+           (customer_premises_id, site_id, type, status, assigned_tech_id, created_by,
             scheduled_date, performed_on, notes)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
          RETURNING id`,
         [
           premisesId,
+          siteId,
           type,
           status,
           techId,
@@ -527,6 +576,25 @@ router.delete(
 // Lines
 // ------------------------------------------------------------
 
+// Where NEW material lines are drawn from: the source the caller named, else the
+// job's site. A job with no site (one that predates sites) falls back to the
+// acting user's own location, and failing that the caller has to say.
+function resolveMaterialSource(user, job, requested) {
+  if (requested) {
+    const allowed = [user.assigned_location_id, job.site_id].filter(Boolean).map(Number);
+    if (isFieldTech(user) && !allowed.includes(Number(requested))) {
+      throw forbidden('Field techs can only record materials out of their own van or the job’s site');
+    }
+    return requested;
+  }
+
+  const fallback = job.site_id ?? user.assigned_location_id;
+  if (!fallback) {
+    throw badRequest('from_location_id is required — say which stock these materials came out of');
+  }
+  return fallback;
+}
+
 // Each of the three is the same transaction: lock the job, check it can still
 // take lines, replace them, read them back.
 async function replaceLines(req, res, { parse, write, read, key }) {
@@ -553,7 +621,11 @@ async function replaceLines(req, res, { parse, write, read, key }) {
 }
 
 // PUT /api/work-orders/:id/materials
-// body: { materials: [{ item_id, quantity, unit_cost?, notes? }] }
+// body: { materials: [{ item_id, quantity, unit_cost?, notes? }], from_location_id? }
+//
+// Materials come out of the stock at the job's site unless `from_location_id`
+// names another source. A field tech may name their own van or the job's site and
+// nothing else.
 //
 // This is the one that moves stock. Sending the complete list and letting the
 // server work out the difference is what makes it safe to retry: the same list
@@ -562,21 +634,7 @@ async function replaceLines(req, res, { parse, write, read, key }) {
 router.put(
   '/:id/materials',
   asyncHandler(async (req, res) => {
-    // Where new lines are drawn from. A tech's van; anyone else has to say,
-    // because they have no van of their own to default to.
     const requested = optionalIntId(req.body?.from_location_id, 'from_location_id');
-    const defaultLocationId = isFieldTech(req.user)
-      ? requireAssignedLocation(req.user)
-      : requested ?? req.user.assigned_location_id;
-
-    if (!defaultLocationId) {
-      throw badRequest(
-        'from_location_id is required — say which stock these materials came out of'
-      );
-    }
-    if (isFieldTech(req.user) && requested && Number(requested) !== Number(defaultLocationId)) {
-      throw forbidden('Field techs can only record materials out of their own van');
-    }
 
     await replaceLines(req, res, {
       key: 'materials',
@@ -585,7 +643,8 @@ router.put(
         writeMaterialLines(client, {
           jobId: job.id,
           lines,
-          defaultLocationId,
+          defaultLocationId: resolveMaterialSource(req.user, job, requested),
+          jobSiteId: job.site_id,
           user: req.user,
         }),
       read: materialLinesByJob,

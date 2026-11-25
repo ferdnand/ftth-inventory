@@ -218,7 +218,9 @@ test('a site can be browsed without searching', async () => {
 
   const res = await h.api.get(`/api/premises?site_id=${bungoma}`, { as: world.tech });
   assert.equal(res.status, 200);
-  assert.equal(res.body.premises.length, 2);
+  // The two just made, plus the fixture premises the helper files under Bungoma.
+  assert.equal(res.body.premises.length, 3);
+  assert.ok(res.body.premises.every((p) => p.site_id === bungoma));
 });
 
 // --- Labelling ------------------------------------------------------------

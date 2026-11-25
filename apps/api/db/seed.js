@@ -142,6 +142,18 @@ async function seed() {
   `,
     [dropCableId, heatShrinkId, connectorId, van.rows[0].id]
   );
+  // Bulk stock at the sites. A job's materials come out of the stock at its
+  // site, so a site with nothing in it is a site nobody can record work at.
+  await db.query(
+    `
+    INSERT INTO stock_levels (item_id, location_id, quantity)
+    SELECT i, s.id, q
+    FROM locations s
+    CROSS JOIN (VALUES ($1::int, 600), ($2::int, 40), ($3::int, 80)) AS v(i, q)
+    WHERE s.type = 'site'
+  `,
+    [dropCableId, heatShrinkId, connectorId]
+  );
   console.log('Seeded stock levels');
 
   // Customer premises. Three shapes on purpose, because all three are real:
@@ -177,9 +189,10 @@ async function seed() {
   const job = await db.query(
     `
     INSERT INTO work_orders
-      (customer_premises_id, type, status, assigned_tech_id, created_by,
+      (customer_premises_id, site_id, type, status, assigned_tech_id, created_by,
        performed_on, completed_at, notes)
-    VALUES ($1, 'new_install', 'completed', $2, $2,
+    VALUES ($1, (SELECT site_id FROM customer_premises WHERE id = $1),
+            'new_install', 'completed', $2, $2,
             (now() - interval '4 months')::date, now() - interval '4 months',
             'First connection at the shop')
     RETURNING id
@@ -240,8 +253,10 @@ async function seed() {
   const openJob = await db.query(
     `
     INSERT INTO work_orders
-      (customer_premises_id, type, status, assigned_tech_id, created_by, scheduled_date, notes)
-    VALUES ($1, 'new_install', 'open', $2, $3, current_date, 'Customer asked for a Friday visit')
+      (customer_premises_id, site_id, type, status, assigned_tech_id, created_by,
+       scheduled_date, notes)
+    VALUES ($1, (SELECT site_id FROM customer_premises WHERE id = $1),
+            'new_install', 'open', $2, $3, current_date, 'Customer asked for a Friday visit')
     RETURNING id
   `,
     [householdPremisesId, johnId, graceId]

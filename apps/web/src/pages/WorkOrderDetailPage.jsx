@@ -416,6 +416,7 @@ export function WorkOrderDetailPage() {
       {editing === 'materials' ? (
         <EditJobMaterialsDialog
           jobId={workOrderId}
+          siteId={wo.site_id}
           current={materials}
           onClose={() => setEditing(null)}
         />

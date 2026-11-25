@@ -82,19 +82,20 @@ export default function NewJobScreen() {
   }, [siteId, sites.data]);
 
   const capturing = way === 'new';
-  const ready = capturing ? premisesLocatable(premises, gps) : Boolean(chosen);
+  const ready = Boolean(siteId) && (capturing ? premisesLocatable(premises, gps) : Boolean(chosen));
 
   async function onSubmit() {
     setError(null);
     try {
-      const body = { type };
+      // The job is at the site the tech picked; the API refuses a premises that
+      // is filed under a different one, so the list below is already narrowed.
+      const body = { type, site_id: siteId };
       if (capturing) {
-        body.premises = toPremisesBody(
-          // A premises captured while working a site belongs to that site
-          // unless the tech said otherwise.
-          { ...premises, site_id: premises.site_id ?? siteId },
-          gps
-        );
+        // A premises captured while working a site belongs to that site unless
+        // the tech said otherwise — and then the job follows it there.
+        const captured = { ...premises, site_id: premises.site_id ?? siteId };
+        body.site_id = captured.site_id;
+        body.premises = toPremisesBody(captured, gps);
       } else {
         body.customer_premises_id = chosen.id;
       }
@@ -121,7 +122,27 @@ export default function NewJobScreen() {
         ))}
       </View>
 
-      <SectionLabel>Where</SectionLabel>
+      <SectionLabel>Site</SectionLabel>
+      {sites.data?.length ? (
+        <View style={[styles.pillRow, { marginBottom: 12 }]}>
+          {sites.data.map((site) => (
+            <Pill
+              key={site.id}
+              active={siteId === site.id}
+              onPress={() => {
+                setSiteId(site.id);
+                // The premises list is per site, so one picked under the
+                // previous site no longer applies.
+                setChosen(null);
+              }}
+            >
+              {site.name}
+            </Pill>
+          ))}
+        </View>
+      ) : null}
+
+      <SectionLabel>Premises</SectionLabel>
       <View style={[styles.pillRow, { marginBottom: 12 }]}>
         {WAYS.map(([key, text]) => (
           <Pill
@@ -136,16 +157,6 @@ export default function NewJobScreen() {
           </Pill>
         ))}
       </View>
-
-      {sites.data?.length && way !== 'new' ? (
-        <View style={[styles.pillRow, { marginBottom: 12 }]}>
-          {sites.data.map((site) => (
-            <Pill key={site.id} active={siteId === site.id} onPress={() => setSiteId(site.id)}>
-              {site.name}
-            </Pill>
-          ))}
-        </View>
-      ) : null}
 
       {way === 'search' ? (
         <SearchBar

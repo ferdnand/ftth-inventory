@@ -257,11 +257,17 @@ async function priceMaterialLines(client, lines) {
 
 // Replaces the material lines on a job AND moves the difference in stock.
 //
-// `defaultLocationId` is where NEW lines are drawn from — the acting user's van.
-// A line that already exists keeps the location it was first drawn from, so a
-// correction returns the difference to the van that supplied it rather than to
-// whichever van the person editing happens to be assigned to now.
-async function writeMaterialLines(client, { jobId, lines, defaultLocationId, user }) {
+// `defaultLocationId` is where NEW lines are drawn from — the job's site unless
+// the caller named another source. A line that already exists keeps the location
+// it was first drawn from, so a correction returns the difference to the stock
+// that supplied it rather than to wherever the person editing is working now.
+//
+// `jobSiteId` widens what a field tech may touch: their own van, plus the stock
+// at the job's site. Nothing else.
+async function writeMaterialLines(
+  client,
+  { jobId, lines, defaultLocationId, jobSiteId = null, user }
+) {
   const existing = await client.query(
     `SELECT item_id, quantity, from_location_id
      FROM job_materials WHERE work_order_id = $1
@@ -289,10 +295,14 @@ async function writeMaterialLines(client, { jobId, lines, defaultLocationId, use
     const now = after.get(itemId);
     const sourceId = was ? was.locationId : defaultLocationId;
 
-    // A tech may only draw down, or top back up, their own van.
-    if (isFieldTech(user) && Number(sourceId) !== Number(user.assigned_location_id)) {
+    // A tech may only draw down, or top back up, their own van or the stock at
+    // this job's site.
+    const techMayUse = [user.assigned_location_id, jobSiteId]
+      .filter(Boolean)
+      .map(Number);
+    if (isFieldTech(user) && !techMayUse.includes(Number(sourceId))) {
       throw forbidden(
-        'Some of these materials were drawn from another van. ' +
+        'Some of these materials were drawn from stock you cannot use. ' +
           'Ask the warehouse to correct that line.'
       );
     }

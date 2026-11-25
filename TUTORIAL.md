@@ -340,6 +340,12 @@ In **Bulk** mode, choose the warehouse as the source. The item dropdown shows
 what it actually holds (`Drop Cable 1-core — 2400 meter on hand`), and typing a
 quantity previews the result: `Drop Cable 1-core: 2400 → 2300 meter`.
 
+**Several items move at once.** Press **+ Add another item** for each extra
+line — cable, sleeves and connectors can go in one submit. An item already
+chosen is dropped from the other lines' dropdowns. Each line is its own
+request, so if one fails (someone just drew the stock down) the rest still
+move and only the failed line stays on the form, with its reason beside it.
+
 **That preview is a convenience, not the guarantee.** The API takes a row lock
 and refuses any movement that would leave stock negative, which is what makes
 two operators racing safe. The page says so, in a banner, on purpose. Prove it:
@@ -425,8 +431,11 @@ can type what is on a dispatch note.
 
 ### 5.1 Starting a job at a place nobody has recorded
 
-**Start a job** asks two things: what kind of job, and where. "Where" has three
-answers, in the order they are actually useful here:
+**Start a job** asks three things: what kind of job, which **site** (Bungoma or
+Kisumu), and which premises. The premises options only ever show that site —
+change the site and the list changes with it, and a premises filed under the
+other site is refused by the API. The premises has three ways in, in the order
+they are actually useful here:
 
 - **Pick from site** — scroll the premises already recorded at Bungoma or
   Kisumu. This exists because a compound saved as a GPS pin and a landmark has
@@ -597,8 +606,11 @@ Two more guards worth trying:
 
 ### 5.6 The materials — this is the one that moves stock
 
-**Materials** on the job screen lists your van's bulk stock, with what is on hand
-against each row and the price per unit. Tap one, type how much you used.
+**Materials** on the job screen lists the bulk stock **at the job's site** (a job
+at Bungoma draws on Bungoma's stock), with what is available against each row
+and the price per unit. Tap one, type how much you used. Send a
+`from_location_id` to draw from something else — a tech may name their own van
+or the job's site, nothing more.
 
 ```bash
 curl -s -X PUT localhost:4000/api/work-orders/3/materials \
@@ -607,7 +619,7 @@ curl -s -X PUT localhost:4000/api/work-orders/3/materials \
                      {"item_id": 5, "quantity": 3}]}'
 ```
 
-The van had 180 m of drop cable; it now has 125. The list you send is the
+The site had 180 m of drop cable; it now has 125. The list you send is the
 **complete** list, not an addition, and the API moves stock by the *difference*
 between what was there and what you sent. Three things follow from that, and all
 three are worth trying:
@@ -617,7 +629,7 @@ three are worth trying:
 # This is why none of these routes needs an idempotency key: a second tap on a
 # dying connection is a no-op, not a double entry.
 
-# Correct 55 down to 40. Fifteen metres come back into the van.
+# Correct 55 down to 40. Fifteen metres come back to the site's stock.
 curl -s -X PUT localhost:4000/api/work-orders/3/materials \
   -H "Authorization: Bearer $TECH" -H 'Content-Type: application/json' \
   -d '{"materials": [{"item_id": 4, "quantity": 40}, {"item_id": 5, "quantity": 3}]}'
@@ -625,9 +637,9 @@ curl -s -X PUT localhost:4000/api/work-orders/3/materials \
 # Drop a line entirely and all of it comes back.
 ```
 
-The picker's arithmetic follows the same rule: what you may claim is the van's
+The picker's arithmetic follows the same rule: what you may claim is the site's
 balance **plus** whatever this job already took out of it, so a line recorded at
-55 can be corrected up to 195 even though the van only shows 125 on hand.
+55 can be corrected up to 195 even though the site only shows 125 on hand.
 
 A router is not a material — it is traced to the premises by serial through the
 installation, so counting it here would double it in the cost total:

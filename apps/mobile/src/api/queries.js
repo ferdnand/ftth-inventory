@@ -261,7 +261,8 @@ function invalidateJob(queryClient, jobId) {
 export function useSetJobMaterials() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ jobId, materials }) => api.setJobMaterials(jobId, materials),
+    mutationFn: ({ jobId, materials, fromLocationId }) =>
+      api.setJobMaterials(jobId, materials, fromLocationId),
     onSuccess: (_data, variables) => {
       invalidateJob(queryClient, variables.jobId);
       queryClient.invalidateQueries({ queryKey: ['stock'] });

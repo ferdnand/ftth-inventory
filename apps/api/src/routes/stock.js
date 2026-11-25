@@ -8,7 +8,7 @@ const {
   optionalNumber,
   nonEmptyString,
 } = require('../lib/validate');
-const { assertLocationAccess, requireRole } = require('../middleware/auth');
+const { assertStockReadable, requireRole } = require('../middleware/auth');
 const { applyMove } = require('../lib/stock');
 const { readKey, findReplay, isIdempotencyConflict } = require('../lib/idempotency');
 
@@ -24,7 +24,7 @@ router.get(
   '/',
   asyncHandler(async (req, res) => {
     const locationId = intId(req.query.location_id, 'location_id');
-    assertLocationAccess(req.user, locationId);
+    await assertStockReadable(req.user, locationId);
 
     const serialized = await db.query(
       `SELECT ii.id, ii.serial_number, ii.mac_address, ii.status,
@@ -66,7 +66,7 @@ router.get(
   '/summary',
   asyncHandler(async (req, res) => {
     const locationId = intId(req.query.location_id, 'location_id');
-    assertLocationAccess(req.user, locationId);
+    await assertStockReadable(req.user, locationId);
 
     // Counts only the units actually available to install. A van also holds
     // faulty/returned units awaiting a run to the warehouse, and counting those

@@ -57,8 +57,11 @@ async function resolveJob(client, { premisesId, requestedJobId, user, type }) {
 
   const created = await client.query(
     `INSERT INTO work_orders
-       (customer_premises_id, type, status, assigned_tech_id, created_by, performed_on, notes)
-     VALUES ($1, $2, 'in_progress', $3, $4, $5, $6)
+       (customer_premises_id, site_id, type, status, assigned_tech_id, created_by,
+        performed_on, notes)
+     SELECT cp.id, cp.site_id, $2::work_order_type_enum, 'in_progress'::work_order_status_enum,
+            $3::int, $4::int, $5::date, $6::text
+       FROM customer_premises cp WHERE cp.id = $1
      RETURNING id`,
     [
       premisesId,

@@ -6,11 +6,12 @@ import { formatQuantity } from '../lib/format';
 import { colors } from '../theme';
 
 /**
- * What went into the job, out of the van.
+ * What went into the job, out of the stock at the job's site.
  *
- * Only the tech's own bulk stock is offered, because that is the only stock
- * they can actually spend: a router is traced by serial through an
- * installation, and the API refuses a serialized item here.
+ * Only that location's bulk stock is offered, because that is the only stock the
+ * job can actually spend: a router is traced by serial through an installation,
+ * and the API refuses a serialized item here. `sourceName` says whose stock it
+ * is — the site's name, or "your van" for a job from before sites existed.
  *
  * `value` is a map of { [itemId]: { quantity, notes } } rather than an array,
  * for the same reason ServicePicker does it: toggling one line cannot reorder
@@ -23,7 +24,7 @@ import { colors } from '../theme';
  * of 500 could never be corrected up to 500 — the van only shows 380 left, and
  * the form would refuse a figure the API would happily accept.
  */
-export function MaterialPicker({ stock, recorded, value, onChange }) {
+export function MaterialPicker({ stock, recorded, value, onChange, sourceName = 'your van' }) {
   const already = recorded ?? {};
   const bulk = (stock ?? []).filter(
     (row) => Number(row.quantity) > 0 || already[row.item_id] !== undefined
@@ -31,9 +32,9 @@ export function MaterialPicker({ stock, recorded, value, onChange }) {
 
   if (bulk.length === 0) {
     return (
-      <EmptyState title="Nothing in your van to record">
-        Bulk stock shows up here once it has been transferred to you. Ask the warehouse for a
-        restock from the Stock tab.
+      <EmptyState title={`Nothing at ${sourceName} to record`}>
+        Bulk stock shows up here once it has been transferred to {sourceName}. Ask the warehouse
+        to move some there.
       </EmptyState>
     );
   }
@@ -76,7 +77,7 @@ export function MaterialPicker({ stock, recorded, value, onChange }) {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.itemName}>{row.item_name}</Text>
                   <Text style={styles.serialStatus}>
-                    {formatQuantity(Number(row.quantity))} {unit} in your van
+                    {formatQuantity(Number(row.quantity))} {unit} at {sourceName}
                     {row.unit_cost ? ` · ${formatMoney(row.unit_cost)} per ${unit}` : ''}
                   </Text>
                 </View>
@@ -100,7 +101,7 @@ export function MaterialPicker({ stock, recorded, value, onChange }) {
                   }
                   hint={
                     Number.isFinite(used) && used > 0 && !overdrawn
-                      ? `${formatQuantity(claimable - used)} ${unit} left in the van after this`
+                      ? `${formatQuantity(claimable - used)} ${unit} left at ${sourceName} after this`
                       : undefined
                   }
                 />
@@ -120,7 +121,7 @@ export function MaterialPicker({ stock, recorded, value, onChange }) {
   );
 }
 
-// The most this job may claim of an item: what is in the van now, plus what
+// The most this job may claim of an item: what is at the source now, plus what
 // this job has already taken out of it.
 function availableFor(row, recorded) {
   return Number(row.quantity) + Number(recorded[row.item_id] ?? 0);
