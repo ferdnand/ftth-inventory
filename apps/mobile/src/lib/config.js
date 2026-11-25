@@ -20,9 +20,13 @@ function metroHost() {
 
 const derivedHost = metroHost();
 
+// The API's PORT is per-machine (4000 is taken on some dev machines, see
+// PROCESS.md §3), so the derived URL must not hardcode it.
+const apiPort = process.env.EXPO_PUBLIC_API_PORT || '4000';
+
 export const API_BASE_URL =
   process.env.EXPO_PUBLIC_API_URL ??
-  (derivedHost ? `http://${derivedHost}:4000/api` : 'http://localhost:4000/api');
+  (derivedHost ? `http://${derivedHost}:${apiPort}/api` : `http://localhost:${apiPort}/api`);
 
 // Shown on the profile screen. When the app cannot reach the API, this is the
 // first thing to look at — and the first debugging step is opening

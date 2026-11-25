@@ -9,12 +9,59 @@
   grid-template-columns: var(--nav-width) 1fr;
   height: 100%;
 }
+.nav-toggle,
+.nav-backdrop {
+  display: none;
+}
+/* Narrow screens: the sidebar becomes an off-canvas drawer opened from the top
+ * bar. `visibility` (delayed until the slide finishes) keeps the closed
+ * drawer's links out of the tab order. */
 @media (max-width: 900px) {
   .shell {
     grid-template-columns: 1fr;
   }
   .sidenav {
-    display: none;
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: min(82vw, 300px);
+    z-index: 40;
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition:
+      transform 0.2s ease,
+      visibility 0s linear 0.2s;
+    box-shadow: var(--shadow-pop);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .sidenav.open {
+    transform: translateX(0);
+    visibility: visible;
+    transition-delay: 0s;
+  }
+  .nav-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    background: rgba(26, 34, 51, 0.45);
+  }
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    align-self: center;
+    margin-left: -8px;
+  }
+  .topbar-title {
+    flex: 1;
+    min-width: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidenav {
+    transition: none;
   }
 }
 
@@ -969,7 +1016,8 @@ td.num {
 
 .cols-2 {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  /* min(…, 100%) so a 320px track never overflows a narrower phone screen. */
+  grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr));
   gap: 16px;
   align-items: start;
 }
@@ -1176,4 +1224,125 @@ p.hint {
   font-family: var(--font-mono);
   font-weight: 600;
   color: var(--teal);
+}
+
+/* --- Phones and touch screens ------------------------------------------- */
+
+/* Layout: small screens. */
+@media (max-width: 640px) {
+  .topbar {
+    padding: 10px 16px;
+    gap: 8px;
+    align-items: center;
+  }
+  .topbar h1 {
+    font-size: 17px;
+  }
+  .topbar-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+  .who {
+    text-align: left;
+  }
+  .topbar-actions .btn-secondary {
+    flex: none;
+    white-space: nowrap;
+  }
+
+  .page {
+    padding: 16px 16px calc(40px + env(safe-area-inset-bottom));
+  }
+
+  .stat-row {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
+
+  .filter-bar {
+    padding: 12px;
+  }
+  .filter-bar .field {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .form-card {
+    padding: 14px;
+  }
+
+  thead th,
+  tbody td {
+    padding: 10px;
+  }
+
+  .modal-backdrop {
+    padding: 12px 8px;
+  }
+  .modal-head,
+  .modal-body,
+  .modal-foot {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+  .modal-foot {
+    flex-wrap: wrap;
+  }
+  .modal-foot > button {
+    flex: 1 1 auto;
+  }
+
+  .toast-stack {
+    left: 12px;
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: none;
+  }
+
+  .login-page {
+    padding: 16px;
+  }
+}
+
+/* Touch: finger-sized targets, and 16px form text — iOS Safari zooms the whole
+ * page into any input set below 16px and does not zoom back out. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']),
+  select,
+  textarea,
+  .field input,
+  .field select,
+  .field textarea,
+  .premise-search input {
+    font-size: 16px;
+  }
+  input[type='checkbox'],
+  input[type='radio'] {
+    width: 20px;
+    height: 20px;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    min-height: 44px;
+  }
+  .btn-sm {
+    min-height: 40px;
+  }
+  .icon-btn {
+    min-width: 40px;
+    min-height: 40px;
+  }
+  .nav-link {
+    padding: 12px;
+  }
+  .row-menu-item {
+    padding: 12px;
+  }
+  .chip {
+    min-height: 36px;
+  }
+  .result-item {
+    padding: 14px 12px;
+  }
 }

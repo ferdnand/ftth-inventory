@@ -1,4 +1,5 @@
-import { NavLink, Outlet } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { label } from '../lib/constants';
 
@@ -48,6 +49,23 @@ const NAV = [
 
 export function AppShell() {
   const { user, signOut, hasRole } = useAuth();
+  const location = useLocation();
+  // Below 900px the sidebar becomes an off-canvas drawer; this is only read there.
+  const [navOpen, setNavOpen] = useState(false);
+
+  // Picking a link, or any other navigation, should reveal the page.
+  useEffect(() => {
+    setNavOpen(false);
+  }, [location.pathname]);
+
+  useEffect(() => {
+    if (!navOpen) return undefined;
+    const onKey = (e) => {
+      if (e.key === 'Escape') setNavOpen(false);
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [navOpen]);
 
   const groups = NAV.map((group) => ({
     ...group,
@@ -56,7 +74,7 @@ export function AppShell() {
 
   return (
     <div className="shell">
-      <nav className="sidenav" aria-label="Main">
+      <nav id="main-nav" className={`sidenav ${navOpen ? 'open' : ''}`.trim()} aria-label="Main">
         <div className="brand">
           FTTH Inventory
           <div className="sub">Field ops</div>
@@ -78,10 +96,25 @@ export function AppShell() {
           </div>
         ))}
       </nav>
+      {navOpen ? (
+        <div className="nav-backdrop" onClick={() => setNavOpen(false)} aria-hidden="true" />
+      ) : null}
 
       <div className="main">
         <div className="topbar">
-          <div>
+          <button
+            type="button"
+            className="icon-btn nav-toggle"
+            aria-label="Menu"
+            aria-controls="main-nav"
+            aria-expanded={navOpen}
+            onClick={() => setNavOpen((open) => !open)}
+          >
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+          <div className="topbar-title">
             <div className="eyebrow">Warehouse dashboard</div>
             <h1>FTTH field inventory</h1>
           </div>

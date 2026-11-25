@@ -271,9 +271,14 @@ Scan the QR code with **Expo Go** on a phone that is on the same Wi-Fi as your
 dev machine, and sign in as `john.kamau@ftth.local`.
 
 The app derives the API address from Metro's host, which in Expo Go is your
-machine's LAN IP — so there is nothing to configure. If it cannot connect, open
-the **Profile** tab: it shows the resolved API URL and where that URL came from.
-See [PROCESS.md](PROCESS.md) §3 for the short debugging path.
+machine's LAN IP — so there is nothing to configure unless your API is not on
+`:4000`; in that case set `EXPO_PUBLIC_API_PORT` in `apps/mobile/.env`. If it
+cannot connect, open the **Profile** tab: it shows the resolved API URL and where
+that URL came from. See [PROCESS.md](PROCESS.md) §3 for the short debugging path.
+
+The warehouse dashboard also works in a phone browser: below 900px the sidebar
+becomes a drawer behind the ☰ button. To open it from a phone, see
+[PROCESS.md](PROCESS.md) §3, "Opening the dashboard on a phone".
 
 ---
 

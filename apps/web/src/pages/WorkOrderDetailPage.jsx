@@ -353,31 +353,33 @@ export function WorkOrderDetailPage() {
         {materials.length === 0 ? (
           <div className="item-meta">Nothing recorded.</div>
         ) : (
-          <table className="lines-table">
-            <thead>
-              <tr>
-                <th>Item</th>
-                <th className="num">Amount</th>
-                <th className="num">Unit cost</th>
-                <th className="num">Line</th>
-                <th>From</th>
-              </tr>
-            </thead>
-            <tbody>
-              {materials.map((line) => (
-                <tr key={line.item_id}>
-                  <td>
-                    <div className="item-name">{line.name}</div>
-                    {line.notes ? <div className="item-meta">{line.notes}</div> : null}
-                  </td>
-                  <td className="num">{formatQuantity(line.quantity, line.unit_of_measure)}</td>
-                  <td className="num">{formatMoney(line.unit_cost)}</td>
-                  <td className="num">{formatMoney(line.line_total)}</td>
-                  <td className="item-meta">{line.from_location_name ?? '—'}</td>
+          <div className="scroll-x">
+            <table className="lines-table">
+              <thead>
+                <tr>
+                  <th>Item</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Unit cost</th>
+                  <th className="num">Line</th>
+                  <th>From</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {materials.map((line) => (
+                  <tr key={line.item_id}>
+                    <td>
+                      <div className="item-name">{line.name}</div>
+                      {line.notes ? <div className="item-meta">{line.notes}</div> : null}
+                    </td>
+                    <td className="num">{formatQuantity(line.quantity, line.unit_of_measure)}</td>
+                    <td className="num">{formatMoney(line.unit_cost)}</td>
+                    <td className="num">{formatMoney(line.line_total)}</td>
+                    <td className="item-meta">{line.from_location_name ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {canEdit ? (
           <button
@@ -395,33 +397,35 @@ export function WorkOrderDetailPage() {
         {services.length === 0 ? (
           <div className="item-meta">Nothing recorded.</div>
         ) : (
-          <table className="lines-table">
-            <thead>
-              <tr>
-                <th>Service</th>
-                <th className="num">Amount</th>
-                <th className="num">Rate</th>
-                <th className="num">Line</th>
-              </tr>
-            </thead>
-            <tbody>
-              {services.map((line) => (
-                <tr key={line.service_id}>
-                  <td>
-                    <div className="item-name">{line.name}</div>
-                    {line.notes ? <div className="item-meta">{line.notes}</div> : null}
-                  </td>
-                  <td className="num">
-                    {line.unit_of_measure === 'job'
-                      ? '1 visit'
-                      : formatQuantity(line.quantity, line.unit_of_measure)}
-                  </td>
-                  <td className="num">{formatMoney(line.unit_rate)}</td>
-                  <td className="num">{formatMoney(line.line_total)}</td>
+          <div className="scroll-x">
+            <table className="lines-table">
+              <thead>
+                <tr>
+                  <th>Service</th>
+                  <th className="num">Amount</th>
+                  <th className="num">Rate</th>
+                  <th className="num">Line</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {services.map((line) => (
+                  <tr key={line.service_id}>
+                    <td>
+                      <div className="item-name">{line.name}</div>
+                      {line.notes ? <div className="item-meta">{line.notes}</div> : null}
+                    </td>
+                    <td className="num">
+                      {line.unit_of_measure === 'job'
+                        ? '1 visit'
+                        : formatQuantity(line.quantity, line.unit_of_measure)}
+                    </td>
+                    <td className="num">{formatMoney(line.unit_rate)}</td>
+                    <td className="num">{formatMoney(line.line_total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {canEdit ? (
           <button
@@ -439,26 +443,28 @@ export function WorkOrderDetailPage() {
         {expenses.length === 0 ? (
           <div className="item-meta">Nothing recorded.</div>
         ) : (
-          <table className="lines-table">
-            <thead>
-              <tr>
-                <th>Kind</th>
-                <th>What for</th>
-                <th className="num">Amount</th>
-                <th>Recorded by</th>
-              </tr>
-            </thead>
-            <tbody>
-              {expenses.map((line) => (
-                <tr key={line.id}>
-                  <td>{label(line.category)}</td>
-                  <td className="item-meta">{line.description ?? '—'}</td>
-                  <td className="num">{formatMoney(line.amount)}</td>
-                  <td className="item-meta">{line.recorded_by_name ?? '—'}</td>
+          <div className="scroll-x">
+            <table className="lines-table">
+              <thead>
+                <tr>
+                  <th>Kind</th>
+                  <th>What for</th>
+                  <th className="num">Amount</th>
+                  <th>Recorded by</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {expenses.map((line) => (
+                  <tr key={line.id}>
+                    <td>{label(line.category)}</td>
+                    <td className="item-meta">{line.description ?? '—'}</td>
+                    <td className="num">{formatMoney(line.amount)}</td>
+                    <td className="item-meta">{line.recorded_by_name ?? '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {canEdit ? (
           <button

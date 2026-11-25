@@ -197,8 +197,9 @@ Move this app instead of fighting for the port:
 1. `apps/api/.env`: `PORT=4100`
 2. `apps/web/.env`: `API_PROXY_TARGET=http://localhost:4100`
 3. Restart **both** `dev:api` and `dev:web` — each reads its `.env` at startup only.
-4. Mobile: `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:4100/api` in
-   `apps/mobile/.env`. The app hardcodes `:4000` otherwise.
+4. Mobile: `EXPO_PUBLIC_API_PORT=4100` in `apps/mobile/.env`, and restart Expo
+   (`EXPO_PUBLIC_*` is read at bundle time). The app defaults to `:4000`
+   otherwise. Leave `EXPO_PUBLIC_API_URL` blank — a pinned LAN IP goes stale.
 
 `apps/web/vite.config.js` reads `API_PROXY_TARGET` through Vite's `loadEnv`.
 Vite does not copy `.env` values into `process.env` for its own config file, so
@@ -235,6 +236,40 @@ If the app cannot reach the API:
 
 Android also needs cleartext HTTP for a LAN dev API; `app.config.js` sets
 `usesCleartextTraffic: true` for that reason.
+
+**Windows firewall.** If the phone's browser cannot open the health URL while
+the laptop's can, the usual cause is Windows blocking inbound connections:
+a Wi-Fi network marked **Public** drops them. Either switch the network to
+Private (Settings → Network & internet → Wi-Fi → the network → Network profile
+type), or, from an **administrator** PowerShell, allow the three dev ports:
+
+```powershell
+New-NetFirewallRule -DisplayName "FTTH dev ports" -Direction Inbound -Action Allow `
+  -Protocol TCP -LocalPort 4000,4100,5173,8081 -Profile Private,Public
+```
+
+Remove it when you are done on shared Wi-Fi:
+`Remove-NetFirewallRule -DisplayName "FTTH dev ports"`.
+
+### Opening the dashboard on a phone
+
+`apps/web` is responsive. Below 900px the sidebar becomes a drawer opened from
+the ☰ button in the top bar; below 640px padding tightens and filters stack; on
+touch devices controls are at least 40–44px and form text is 16px (iOS Safari
+zooms into anything smaller). Tables scroll horizontally inside their own
+container rather than the page.
+
+To try it from a phone on the same Wi-Fi, expose the Vite dev server on the LAN:
+
+```bash
+npm run dev -w apps/web -- --host    # prints a Network: http://<LAN-IP>:5173 URL
+```
+
+Open that URL on the phone. `/api` still goes through the Vite proxy, so the
+phone needs no API address. `--host` makes the dev server reachable by everyone
+on the network, so use it on a network you trust. The Windows firewall note above
+applies here too. Without a phone, Chrome DevTools' device toolbar (Ctrl+Shift+M)
+exercises the same CSS.
 
 ---
 

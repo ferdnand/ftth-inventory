@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { chart, axisProps, seriesColor } from './chartTheme';
 import { ChartTooltip } from './ChartFrame';
+import { useMediaQuery } from '../hooks/useMediaQuery';
 
 // Grid is a solid hairline, horizontal only, never dashed.
 const Grid = ({ vertical = false }) => (
@@ -62,17 +63,24 @@ export function TrendLine({ data, xKey, yKey, yName, height = 240, formatX }) {
  */
 export function RankedBar({ data, labelKey, valueKey, valueName, height, formatValue }) {
   const rowHeight = 30;
+  // 168px of labels would leave a 360px phone almost no bar to draw.
+  const narrow = useMediaQuery('(max-width: 640px)');
+  const labelWidth = narrow ? 96 : 168;
   return (
     <ResponsiveContainer width="100%" height={height ?? Math.max(data.length * rowHeight + 40, 160)}>
-      <BarChart data={data} layout="vertical" margin={{ top: 4, right: 48, bottom: 4, left: 8 }}>
+      <BarChart
+        data={data}
+        layout="vertical"
+        margin={{ top: 4, right: narrow ? 16 : 48, bottom: 4, left: 8 }}
+      >
         <Grid vertical />
         <XAxis type="number" {...axisProps} />
         <YAxis
           type="category"
           dataKey={labelKey}
-          width={168}
+          width={labelWidth}
           {...axisProps}
-          tick={{ ...axisProps.tick, width: 160 }}
+          tick={{ ...axisProps.tick, width: labelWidth - 8 }}
         />
         <Tooltip content={<ChartTooltip formatValue={formatValue} />} cursor={{ fill: chart.grid, fillOpacity: 0.3 }} />
         <Bar
