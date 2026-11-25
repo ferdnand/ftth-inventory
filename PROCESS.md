@@ -184,6 +184,35 @@ curl http://localhost:4000/api/health
 # {"status":"ok"}
 ```
 
+### If port 4000 is already taken
+
+The dashboard shows **"Request failed (404)"** on every call, including sign-in,
+when something else is listening on :4000. Confirm with the health check above:
+if the reply is not `{"status":"ok"}` (for example `{"detail":"Not Found"}` from
+`server: uvicorn`), another program owns the port. One known culprit is the VS
+Code **Stata MCP** extension, which serves on `localhost:4000`.
+
+Move this app instead of fighting for the port:
+
+1. `apps/api/.env`: `PORT=4100`
+2. `apps/web/.env`: `API_PROXY_TARGET=http://localhost:4100`
+3. Restart **both** `dev:api` and `dev:web` — each reads its `.env` at startup only.
+4. Mobile: `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:4100/api` in
+   `apps/mobile/.env`. The app hardcodes `:4000` otherwise.
+
+`apps/web/vite.config.js` reads `API_PROXY_TARGET` through Vite's `loadEnv`.
+Vite does not copy `.env` values into `process.env` for its own config file, so
+a plain `process.env.API_PROXY_TARGET` is silently ignored and the proxy falls
+back to :4000 — the proxy target changes nothing until `loadEnv` is used.
+
+To see what owns a port (PowerShell):
+
+```powershell
+Get-NetTCPConnection -LocalPort 4000 -State Listen |
+  ForEach-Object { Get-CimInstance Win32_Process -Filter "ProcessId=$($_.OwningProcess)" } |
+  Select-Object ProcessId, Name, CommandLine
+```
+
 ### Running the mobile app on a physical phone
 
 This is the one part of the setup with a sharp edge, so it is worth being
