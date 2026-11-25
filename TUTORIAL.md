@@ -1030,6 +1030,17 @@ That is the same 409 anyone else gets. The unit is one half of a live
 installation; removing it through the installation endpoint fixes both rows
 together, and there is no path that fixes only one.
 
+### 11.0 Seeing what you hold
+
+**Stock → Stock on hand** lists every item we hold with its total, and chips for
+each location it sits in (click one for that location's serials). Filter by
+item name, category or location. Serialized items show how many are ready to
+install and how many are waiting to be collected; installed and retired units are
+not "on hand" anywhere. Warehouse staff, PMs and admins only — a field tech sees
+their own van in the app.
+
+`GET /api/stock/overview` is the endpoint behind it.
+
 ### 11.1b Cleaning up without SQL: the three-dots menu
 
 **Catalog → Items**, **Stock → Locations** and **Operations → Jobs** each have a

@@ -286,3 +286,42 @@ test('GET /api/stock/summary separates installable units from units awaiting ret
   assert.equal(res.body.totals.installable_units, 2);
   assert.equal(res.body.totals.to_return_units, 1);
 });
+
+test('GET /api/stock/overview lists every item at every location, and skips zero rows', async () => {
+  await h.setStock({ itemId: world.cable.id, locationId: world.warehouse.id, quantity: 300 });
+  await h.setStock({ itemId: world.cable.id, locationId: world.van.id, quantity: 40 });
+  const empty = await h.createItem({ name: 'Empty Bulk', trackingType: 'bulk', category: 'Cable' });
+  await h.setStock({ itemId: empty.id, locationId: world.warehouse.id, quantity: 0 });
+  await h.createInstance({ itemId: world.ont.id, serial: 'O-1', locationId: world.warehouse.id });
+  await h.createInstance({
+    itemId: world.ont.id,
+    serial: 'O-2',
+    status: 'faulty',
+    locationId: world.warehouse.id,
+  });
+  // Installed units have no location, so they are not "on hand" anywhere.
+  await h.createInstance({ itemId: world.ont.id, serial: 'O-3', status: 'installed' });
+
+  const res = await h.api.get('/api/stock/overview', { as: world.staff });
+  assert.equal(res.status, 200);
+
+  const cable = res.body.stock.filter((r) => r.item_id === world.cable.id);
+  assert.deepEqual(
+    cable.map((r) => [r.location_name, r.quantity]).sort(),
+    [['Van 1', 40], ['Warehouse', 300]]
+  );
+
+  const ont = res.body.stock.find((r) => r.item_id === world.ont.id);
+  assert.equal(ont.quantity, 2);
+  assert.equal(ont.installable, 1);
+  assert.equal(ont.to_return, 1);
+
+  assert.ok(!res.body.stock.some((r) => r.item_id === empty.id));
+});
+
+test('GET /api/stock/overview is back-office only', async () => {
+  const tech = await h.api.get('/api/stock/overview', { as: world.tech });
+  assert.equal(tech.status, 403);
+  const admin = await h.api.get('/api/stock/overview', { as: world.admin });
+  assert.equal(admin.status, 200);
+});

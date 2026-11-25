@@ -464,6 +464,9 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
   in `catch`, and releases in `finally`. `POST /api/installations/:premisesId/replace`
   is the reference implementation.
 
+- **`GET /api/stock/overview` is back-office only.** One row per item per
+  location (zero bulk rows left out), so the Stock on hand page needs one request,
+  not one per location. A field tech's stock is their own van via `GET /api/stock`.
 - **Items, locations and jobs share one rule: retire, don't delete.** Each has a
   three-dots row menu on its list page (`components/RowMenu.jsx`). Retire is
   `is_active=false` for items and locations, and status `cancelled` for a job.

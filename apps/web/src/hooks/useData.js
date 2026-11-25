@@ -65,6 +65,13 @@ export const useStock = (locationId) =>
     enabled: Boolean(locationId),
   });
 
+export const useStockOverview = () =>
+  useQuery({
+    queryKey: keys.stockOverview,
+    queryFn: () => api.stockOverview(),
+    select: (data) => data.stock,
+  });
+
 export const useStockSummary = (locationId) =>
   useQuery({
     queryKey: keys.stockSummary(locationId),

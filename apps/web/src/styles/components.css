@@ -1152,3 +1152,28 @@ p.hint {
   color: var(--text-2);
   margin: 0 0 14px;
 }
+
+/* --- Stock on hand ------------------------------------------------------ */
+
+.stock-where {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+}
+.stock-where a {
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+.stock-where a:hover {
+  border-color: var(--teal);
+  text-decoration: none;
+}
+.stock-where-qty {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--teal);
+}

@@ -16,6 +16,7 @@ const NAV = [
     title: 'Stock',
     links: [
       { to: '/locations', text: 'Locations' },
+      { to: '/stock/overview', text: 'Stock on hand', roles: ['warehouse_staff', 'pm'] },
       { to: '/stock/receive', text: 'Receive stock', roles: ['warehouse_staff', 'pm'] },
       { to: '/stock/transfer', text: 'Transfer stock', roles: ['warehouse_staff', 'pm'] },
       { to: '/restock', text: 'Restock queue', roles: ['warehouse_staff', 'pm'] },

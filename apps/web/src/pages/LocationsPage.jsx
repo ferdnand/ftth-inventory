@@ -240,6 +240,10 @@ export function LocationsPage() {
               <RowMenu
                 label={`Actions for ${row.name}`}
                 items={[
+                  {
+                    label: 'View stock',
+                    onSelect: () => navigate(`/locations/${row.id}/stock`),
+                  },
                   { label: 'Edit', onSelect: () => setEditing(row) },
                   {
                     label: row.is_active ? 'Retire' : 'Restore',
@@ -265,7 +269,7 @@ export function LocationsPage() {
       <PageHeader
         eyebrow="Stock"
         title="Locations"
-        sub="Warehouses, sites and tech vans. Click a row for what it holds."
+        sub="Warehouses, sites and tech vans. Click a row, or use ⋮ → View stock, to see the items and quantities it holds."
         actions={
           canEdit ? (
             <button type="button" className="btn-primary" onClick={() => setShowForm(true)}>

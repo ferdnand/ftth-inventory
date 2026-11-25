@@ -9,6 +9,7 @@ import { ServicesPage } from './pages/ServicesPage';
 import { LocationsPage } from './pages/LocationsPage';
 import { LocationStockPage } from './pages/LocationStockPage';
 import { ReceiveStockPage } from './pages/ReceiveStockPage';
+import { StockOverviewPage } from './pages/StockOverviewPage';
 import { TransferStockPage } from './pages/TransferStockPage';
 import { WorkOrdersPage } from './pages/WorkOrdersPage';
 import { WorkOrderDetailPage } from './pages/WorkOrderDetailPage';
@@ -90,6 +91,7 @@ export const router = createBrowserRouter([
           {
             element: <RoleRoute roles={STAFF} />,
             children: [
+              { path: 'stock/overview', element: <StockOverviewPage /> },
               { path: 'stock/receive', element: <ReceiveStockPage /> },
               { path: 'stock/transfer', element: <TransferStockPage /> },
               { path: 'restock', element: <RestockQueuePage /> },

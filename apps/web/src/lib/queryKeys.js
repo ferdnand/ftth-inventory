@@ -14,6 +14,7 @@ export const keys = {
   users: (params) => ['users', params ?? {}],
 
   stock: (locationId) => ['stock', locationId],
+  stockOverview: ['stock', 'overview'], // under ['stock'] so a movement refreshes it
   stockSummary: (locationId) => ['stock', 'summary', locationId],
   itemInstances: (params) => ['item-instances', params ?? {}],
 

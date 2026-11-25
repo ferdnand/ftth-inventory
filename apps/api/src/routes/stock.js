@@ -122,6 +122,53 @@ router.get(
   })
 );
 
+// GET /api/stock/overview
+// Every item held anywhere, one row per item per location: the "what do we have
+// and where" view that the per-location endpoints above cannot give without a
+// request per location.
+//
+// Back-office only. A field tech's view of stock is their own van (see GET /),
+// and handing them the whole company's inventory would be a leak, not a feature.
+//
+// Serialized items count the units sitting at the location in any state
+// (current_location_id is NULL once a unit is installed or retired, so those
+// drop out on their own); `installable` splits out the ones a tech could fit
+// today. Bulk items count the stock_levels quantity. Zero-quantity rows are
+// bookkeeping and are left out.
+router.get(
+  '/overview',
+  requireRole('warehouse_staff', 'pm'),
+  asyncHandler(async (req, res) => {
+    const result = await db.query(
+      `SELECT i.id AS item_id, i.name AS item_name, i.category, i.tracking_type,
+              i.unit_of_measure, i.reorder_threshold,
+              l.id AS location_id, l.name AS location_name, l.type AS location_type,
+              l.is_active AS location_active,
+              COUNT(*)::int AS quantity,
+              COUNT(*) FILTER (WHERE ii.status = 'in_stock')::int AS installable,
+              COUNT(*) FILTER (WHERE ii.status IN ('faulty', 'returned'))::int AS to_return
+       FROM item_instances ii
+       JOIN items i ON i.id = ii.item_id
+       JOIN locations l ON l.id = ii.current_location_id
+       GROUP BY i.id, l.id
+
+       UNION ALL
+
+       SELECT i.id, i.name, i.category, i.tracking_type, i.unit_of_measure,
+              i.reorder_threshold,
+              l.id, l.name, l.type, l.is_active,
+              sl.quantity::float8, sl.quantity::float8, 0
+       FROM stock_levels sl
+       JOIN items i ON i.id = sl.item_id
+       JOIN locations l ON l.id = sl.location_id
+       WHERE sl.quantity <> 0
+
+       ORDER BY category, item_name, location_name`
+    );
+    res.json({ stock: result.rows });
+  })
+);
+
 // POST /api/stock/adjustments
 // body: { item_id, location_id, counted_quantity, notes, idempotency_key? }
 //

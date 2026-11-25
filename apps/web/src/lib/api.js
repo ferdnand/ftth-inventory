@@ -79,6 +79,8 @@ export const api = {
 
   // --- Stock ---
   stock: (locationId) => request('/stock', { params: { location_id: locationId } }),
+  // Every item at every location, back-office only.
+  stockOverview: () => request('/stock/overview'),
   stockSummary: (locationId) => request('/stock/summary', { params: { location_id: locationId } }),
 
   itemInstances: (params) => request('/item-instances', { params }),
