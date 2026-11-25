@@ -96,14 +96,20 @@ export const api = {
   adjustStock: (body) => request('/stock/adjustments', { method: 'POST', body }),
 
   // --- Premises & installations ---
-  searchPremises: (q, signal, siteId) =>
-    request('/premises/search', { params: { q, site_id: siteId }, signal }),
+  searchPremises: (q, signal, siteId, includeInactive) =>
+    request('/premises/search', {
+      params: { q, site_id: siteId, include_inactive: includeInactive ? 'true' : undefined },
+      signal,
+    }),
   // Browsing rather than searching: a compound recorded as a GPS pin and a
   // landmark has nothing anyone would think to type into a search box.
   premisesList: (params) => request('/premises', { params }),
   premises: (id) => request(`/premises/${id}`),
   createPremises: (body) => request('/premises', { method: 'POST', body }),
   updatePremises: (id, body) => request(`/premises/${id}`, { method: 'PATCH', body }),
+  // Admin-only, and refused (409) once the premises has a job or a router — mark it
+  // a former client then (PATCH is_active: false).
+  deletePremises: (id) => request(`/premises/${id}`, { method: 'DELETE' }),
   currentInstallation: (premisesId) => request(`/premises/${premisesId}/current`),
   premisesHistory: (premisesId) => request(`/premises/${premisesId}/history`),
 

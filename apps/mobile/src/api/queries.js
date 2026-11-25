@@ -116,6 +116,16 @@ export const useCurrentInstallation = (premisesId) =>
     enabled: Boolean(premisesId),
   });
 
+// Every router live at a premises. A hotspot may have several; a PPPoE premises
+// has at most one. Same request as useCurrentInstallation, so one fetch serves both.
+export const useActiveInstallations = (premisesId) =>
+  useQuery({
+    queryKey: keys.currentInstallation(premisesId),
+    queryFn: () => api.currentInstallation(premisesId),
+    select: (d) => d.installations ?? (d.current ? [d.current] : []),
+    enabled: Boolean(premisesId),
+  });
+
 export const usePremisesHistory = (premisesId) =>
   useQuery({
     queryKey: keys.premisesHistory(premisesId),

@@ -18,7 +18,16 @@ export const INSTANCE_STATUSES = [
   'retired',
 ];
 export const WORK_ORDER_TYPES = ['new_install', 'repair', 'upgrade', 'removal'];
-export const PREMISES_TYPES = ['household', 'business', 'institution', 'multi_dwelling'];
+export const PREMISES_TYPES = [
+  'household',
+  'plot',
+  'flat',
+  'business',
+  'institution',
+  'multi_dwelling',
+];
+export const CONNECTION_TYPES = ['pppoe', 'hotspot'];
+export const HOTSPOT_ARRANGEMENTS = ['token', 'voucher'];
 export const JOB_EXPENSE_CATEGORIES = [
   'transport',
   'casual_labour',
@@ -49,6 +58,13 @@ export const LABELS = {
   removal: 'Removal',
 
   household: 'Household',
+  plot: 'Plot',
+  flat: 'Flat',
+
+  pppoe: 'PPPoE',
+  hotspot: 'Hotspot',
+  token: 'Token paid',
+  voucher: 'Voucher given',
   business: 'Business',
   institution: 'Institution',
   multi_dwelling: 'Multi-dwelling',

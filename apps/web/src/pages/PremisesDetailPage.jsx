@@ -1,14 +1,16 @@
 import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import {
   useCurrentInstallation,
+  useDeletePremises,
   usePremisesHistory,
   useUpdatePremises,
   useWorkOrders,
 } from '../hooks/useData';
 import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 import {
   PremisesFields,
   premisesFormBody,
@@ -41,6 +43,10 @@ function PremisesFormDialog({ premises, onClose }) {
     // landmark. Same rule as premises_must_be_locatable in the database.
     if (!premisesFormLocatable(form)) {
       setErrors({ address: 'Give this, or a landmark, or a GPS pin' });
+      return;
+    }
+    if (form.connection_type === 'hotspot' && !form.hotspot_arrangement) {
+      setErrors({ hotspot_arrangement: 'Say whether the host gets a token or a voucher' });
       return;
     }
     try {
@@ -81,6 +87,44 @@ function PremisesFormDialog({ premises, onClose }) {
   );
 }
 
+function DeletePremisesDialog({ premises, onClose, onDeleted }) {
+  const remove = useDeletePremises();
+  const { notify, notifyError } = useToast();
+
+  async function onConfirm() {
+    try {
+      await remove.mutateAsync(premises.id);
+      notify(`${premises.label} deleted`);
+      onDeleted();
+    } catch (err) {
+      // A 409 means it has jobs or routers; its message says to mark it a
+      // former client instead.
+      notifyError(err);
+      onClose();
+    }
+  }
+
+  return (
+    <ConfirmDialog
+      title={`Delete ${premises.label}?`}
+      confirmLabel="Delete permanently"
+      pendingLabel="Deleting…"
+      pending={remove.isPending}
+      onConfirm={onConfirm}
+      onClose={onClose}
+    >
+      <p>
+        This removes the premises for good and cannot be undone. It only works for one that never
+        had a job or a router — one added by mistake, or that never became a client.
+      </p>
+      <p>
+        For a customer who has left, use <strong>Mark as former client</strong> instead: the
+        record and its history stay, but it leaves the lists.
+      </p>
+    </ConfirmDialog>
+  );
+}
+
 export function PremisesDetailPage() {
   const { id } = useParams();
   const premisesId = Number(id);
@@ -89,8 +133,12 @@ export function PremisesDetailPage() {
   const current = useCurrentInstallation(premisesId);
   const workOrders = useWorkOrders({ customer_premises_id: premisesId });
   const { hasRole } = useAuth();
-  const [editingServices, setEditingServices] = useState(false);
+  const [editingServices, setEditingServices] = useState(null); // the router being edited
   const [editingPremises, setEditingPremises] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const update = useUpdatePremises();
+  const navigate = useNavigate();
+  const { notify, notifyError } = useToast();
 
   // Installs happen in the field, so the dashboard's role here is correcting
   // the record afterwards — a mistyped cable length, a splice nobody logged.
@@ -123,6 +171,19 @@ export function PremisesDetailPage() {
   }
 
   const { premises, total_routers: totalRouters, replacement_count: replacements } = history.data;
+  const isHotspot = premises.connection_type === 'hotspot';
+  const routers = current.data ?? [];
+
+  // A former client keeps the record but leaves every list, so a customer who
+  // comes back can be reinstated rather than captured again.
+  async function setFormerClient(former) {
+    try {
+      await update.mutateAsync({ id: premises.id, is_active: !former });
+      notify(former ? 'Marked as a former client' : 'Reinstated as a client');
+    } catch (err) {
+      notifyError(err);
+    }
+  }
   const openJobs = (workOrders.data ?? []).filter((wo) =>
     ['open', 'in_progress'].includes(wo.status)
   );
@@ -142,6 +203,21 @@ export function PremisesDetailPage() {
                 onClick={() => setEditingPremises(true)}
               >
                 Edit premises
+              </button>
+            ) : null}
+            {canRecordWork ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={update.isPending}
+                onClick={() => setFormerClient(premises.is_active)}
+              >
+                {premises.is_active ? 'Mark as former client' : 'Reinstate client'}
+              </button>
+            ) : null}
+            {hasRole('admin') ? (
+              <button type="button" className="btn-secondary" onClick={() => setDeleting(true)}>
+                Delete…
               </button>
             ) : null}
             <Link className="btn-secondary" to="/premises">
@@ -171,15 +247,32 @@ export function PremisesDetailPage() {
 
       {/* An address used to be the whole story. Now the pin and the phone
         * number are the parts that get anyone here, so they come first. */}
+      {!premises.is_active ? (
+        <div className="banner info">
+          This is a former client. It no longer shows in the premises lists, and nothing new can
+          be started here until it is reinstated.
+        </div>
+      ) : null}
+
       <div className="section-label">The place</div>
       <div className="card">
         <div className="item-meta">
-          {[label(premises.premises_type), premises.village, premises.site_name]
+          {[
+            label(premises.connection_type),
+            label(premises.premises_type),
+            premises.village,
+            premises.site_name,
+          ]
             .filter(Boolean)
             .join(' · ') || 'No site or village recorded'}
         </div>
+        {isHotspot ? (
+          <div className="item-meta">Host gets: {label(premises.hotspot_arrangement)}</div>
+        ) : null}
         {premises.customer_name ? (
-          <div className="item-name">{premises.customer_name}</div>
+          <div className="item-name">
+            {isHotspot ? `Contact: ${premises.customer_name}` : premises.customer_name}
+          </div>
         ) : null}
         {premises.customer_phone ? (
           <div className="item-meta">{premises.customer_phone}</div>
@@ -201,54 +294,72 @@ export function PremisesDetailPage() {
         ) : null}
       </div>
 
-      <div className="section-label">Currently installed</div>
+      <div className="section-label">
+        {isHotspot ? `Currently installed · ${routers.length}` : 'Currently installed'}
+      </div>
       {current.isPending ? (
         <LoadingRows rows={2} />
       ) : current.isError ? (
         <ErrorState error={current.error} onRetry={current.refetch} />
-      ) : current.data === null ? (
+      ) : routers.length === 0 ? (
         <EmptyState title="No active router at this address">
           Nothing is installed here right now. A field tech can install one from the mobile app.
         </EmptyState>
       ) : (
-        <div className="card">
-          <div className="card flat" style={{ border: 'none', padding: 0, margin: 0, background: 'transparent' }}>
-            <div>
-              <div className="item-name">{current.data.item_name}</div>
-              <div className="item-meta">
-                {current.data.serial_number}
-                {current.data.mac_address ? ` · ${current.data.mac_address}` : ''}
+        <>
+          {/* A hotspot can carry several, so one card per router. A PPPoE
+            * premises only ever shows the one. */}
+          {routers.map((router) => (
+            <div className="card" key={router.installation_id}>
+              <div
+                className="card flat"
+                style={{ border: 'none', padding: 0, margin: 0, background: 'transparent' }}
+              >
+                <div>
+                  <div className="item-name">{router.item_name}</div>
+                  <div className="item-meta">
+                    {router.serial_number}
+                    {router.mac_address ? ` · ${router.mac_address}` : ''}
+                  </div>
+                  <div className="item-meta">
+                    Installed {formatDate(router.installed_at)} by {router.installed_by_name}
+                  </div>
+                  <ServicesSummary services={router.services} />
+                </div>
+                <Badge variant="installed">Active</Badge>
               </div>
-              <div className="item-meta">
-                Installed {formatDate(current.data.installed_at)} by {current.data.installed_by_name}
-              </div>
-              <ServicesSummary services={current.data.services} />
+              {canRecordWork ? (
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  onClick={() => setEditingServices(router)}
+                >
+                  {router.services?.length ? 'Edit recorded work' : 'Record work performed'}
+                </button>
+              ) : null}
             </div>
-            <Badge variant="installed">Active</Badge>
-          </div>
-          {canRecordWork ? (
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={() => setEditingServices(true)}
-            >
-              {current.data.services?.length ? 'Edit recorded work' : 'Record work performed'}
-            </button>
-          ) : null}
-        </div>
+          ))}
+        </>
       )}
 
-      {editingServices && current.data ? (
+      {editingServices ? (
         <EditServicesDialog
-          installationId={current.data.installation_id}
+          installationId={editingServices.installation_id}
           premisesId={premisesId}
-          current={current.data.services}
-          onClose={() => setEditingServices(false)}
+          current={editingServices.services}
+          onClose={() => setEditingServices(null)}
         />
       ) : null}
 
       {editingPremises ? (
         <PremisesFormDialog premises={premises} onClose={() => setEditingPremises(false)} />
+      ) : null}
+      {deleting ? (
+        <DeletePremisesDialog
+          premises={premises}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => navigate('/premises')}
+        />
       ) : null}
 
       <div className="section-label">Site history</div>

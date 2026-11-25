@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCreatePremises, usePremisesList, usePremisesSearch, useSites } from '../hooks/useData';
 import { useDebounced } from '../hooks/useDebounced';
+import { Badge } from '../components/Badge';
 import { Modal } from '../components/Modal';
 import {
   PremisesFields,
@@ -13,6 +14,7 @@ import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
 import { formatPremisesCode, parsePremisesCode } from '../lib/format';
+import { label } from '../lib/constants';
 
 function PremisesFormDialog({ onClose, onCreated, defaultSiteId }) {
   const create = useCreatePremises();
@@ -31,6 +33,10 @@ function PremisesFormDialog({ onClose, onCreated, defaultSiteId }) {
     // to be findable again, and a pin or a landmark does that.
     if (!premisesFormLocatable(form)) {
       setError('Give a landmark, an address, or a GPS pin — something that finds the place again');
+      return;
+    }
+    if (form.connection_type === 'hotspot' && !form.hotspot_arrangement) {
+      setError('Say whether the host of this hotspot gets a token or a voucher');
       return;
     }
     try {
@@ -100,11 +106,26 @@ function PremisesRow({ row, onOpen }) {
         if (e.key === 'Enter') onOpen(row.id);
       }}
     >
-      <div className="addr">{row.label}</div>
+      <div className="addr">
+        {row.label}
+        {row.connection_type === 'hotspot' ? (
+          <span style={{ marginLeft: 8 }}>
+            <Badge variant="installed">Hotspot</Badge>
+          </span>
+        ) : null}
+        {!row.is_active ? (
+          <span style={{ marginLeft: 8 }}>
+            <Badge variant="danger">Former client</Badge>
+          </span>
+        ) : null}
+      </div>
       <div className="id">
         {[
           formatPremisesCode(row.id),
-          row.customer_name,
+          label(row.premises_type),
+          row.connection_type === 'hotspot' && row.customer_name
+            ? `Contact: ${row.customer_name}`
+            : row.customer_name,
           row.customer_phone,
           row.customer_account_id,
         ]
@@ -119,6 +140,7 @@ export function PremisesSearchPage() {
   const navigate = useNavigate();
   const [term, setTerm] = useState('');
   const [siteFilter, setSiteFilter] = useState(null);
+  const [showFormer, setShowFormer] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const debounced = useDebounced(term, 300);
   const sites = useSites();
@@ -133,9 +155,13 @@ export function PremisesSearchPage() {
   // With a term, search (narrowed to the chosen site). Without one, list the
   // site — or every site, grouped — rather than showing an empty page.
   const searching = debounced.trim().length >= 2;
-  const search = usePremisesSearch(debounced, siteFilter);
+  const search = usePremisesSearch(debounced, siteFilter, showFormer);
   const browse = usePremisesList(
-    { limit: 500, ...(siteFilter ? { site_id: siteFilter } : {}) },
+    {
+      limit: 500,
+      ...(siteFilter ? { site_id: siteFilter } : {}),
+      ...(showFormer ? { include_inactive: 'true' } : {}),
+    },
     { enabled: !searching }
   );
   const query = searching ? search : browse;
@@ -174,6 +200,13 @@ export function PremisesSearchPage() {
             {site.name}
           </button>
         ))}
+        <button
+          type="button"
+          className={`chip ${showFormer ? 'active' : ''}`.trim()}
+          onClick={() => setShowFormer((v) => !v)}
+        >
+          Include former clients
+        </button>
       </div>
 
       <div className="premise-search">

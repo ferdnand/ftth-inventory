@@ -10,7 +10,18 @@ const USER_ROLES = ['warehouse_staff', 'field_tech', 'pm', 'admin'];
 const REMOVAL_REASONS = ['faulty', 'upgrade', 'customer_cancelled', 'theft', 'other'];
 const WORK_ORDER_TYPES = ['new_install', 'repair', 'upgrade', 'removal'];
 const WORK_ORDER_STATUSES = ['open', 'in_progress', 'completed', 'cancelled'];
-const PREMISES_TYPES = ['household', 'business', 'institution', 'multi_dwelling'];
+const PREMISES_TYPES = [
+  'household',
+  'plot',
+  'flat',
+  'business',
+  'institution',
+  'multi_dwelling',
+];
+// How a premises is connected. A hotspot may carry several routers, and says
+// what its host gets for hosting it.
+const CONNECTION_TYPES = ['pppoe', 'hotspot'];
+const HOTSPOT_ARRANGEMENTS = ['token', 'voucher'];
 const JOB_EXPENSE_CATEGORIES = [
   'transport',
   'casual_labour',
@@ -67,6 +78,8 @@ module.exports = {
   WORK_ORDER_TYPES,
   WORK_ORDER_STATUSES,
   PREMISES_TYPES,
+  CONNECTION_TYPES,
+  HOTSPOT_ARRANGEMENTS,
   JOB_EXPENSE_CATEGORIES,
   SITE_NAMES,
   RESTOCK_STATUSES,

@@ -21,7 +21,7 @@ const {
   optionalDate,
   oneOf,
 } = require('./validate');
-const { PREMISES_TYPES } = require('./constants');
+const { PREMISES_TYPES, CONNECTION_TYPES, HOTSPOT_ARRANGEMENTS } = require('./constants');
 
 // Everything a client needs to show a premises, with the site name resolved.
 const PREMISES_SELECT = `
@@ -43,6 +43,10 @@ const FIELDS = {
   landmark: (v) => optionalString(v, 'landmark', 300),
   notes: (v) => optionalString(v, 'notes', 1000),
   premises_type: (v) => oneOf(v, PREMISES_TYPES, 'premises_type'),
+  connection_type: (v) => oneOf(v, CONNECTION_TYPES, 'connection_type'),
+  // null is allowed so a PATCH can clear it when a hotspot becomes PPPoE.
+  hotspot_arrangement: (v) =>
+    v === null ? null : oneOf(v, HOTSPOT_ARRANGEMENTS, 'hotspot_arrangement'),
   site_id: (v) => optionalIntId(v, 'site_id'),
   gps_lat: (v) => optionalNumber(v, 'gps_lat'),
   gps_lng: (v) => optionalNumber(v, 'gps_lng'),
@@ -73,6 +77,20 @@ function assertGpsCoherent(lat, lng, accuracy) {
   }
   if (accuracy !== null && accuracy !== undefined && accuracy < 0) {
     throw badRequest('gps_accuracy_m cannot be negative');
+  }
+}
+
+// A hotspot says what its host gets; nothing else carries one. The database has
+// the same rule (hotspot_arrangement_matches_connection) — this is the sentence
+// a person can act on.
+function assertHotspotCoherent(connectionType, arrangement) {
+  if (connectionType === 'hotspot' && !arrangement) {
+    throw badRequest(
+      'A hotspot has to say what its host gets: hotspot_arrangement is "token" or "voucher"'
+    );
+  }
+  if (connectionType !== 'hotspot' && arrangement) {
+    throw badRequest('hotspot_arrangement only applies to a hotspot');
   }
 }
 
@@ -110,6 +128,10 @@ async function insertPremises(queryable, body, capturedBy) {
     values.gps_accuracy_m ?? null
   );
   assertLocatable(values);
+  assertHotspotCoherent(
+    values.connection_type ?? 'pppoe',
+    values.hotspot_arrangement ?? null
+  );
   await assertIsSite(queryable, values.site_id ?? null);
 
   // A fix with no capture time is assumed to have been taken now, which is true
@@ -182,6 +204,7 @@ module.exports = {
   parsePremisesFields,
   assertGpsCoherent,
   assertLocatable,
+  assertHotspotCoherent,
   assertIsSite,
   insertPremises,
   premisesLabel,

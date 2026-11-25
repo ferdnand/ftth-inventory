@@ -3,7 +3,7 @@ import { GpsField, gpsFields } from './GpsField';
 import { TextField } from './fields';
 import { Pill, SectionLabel, styles } from './ui';
 import { label } from '../lib/constants';
-import { PREMISES_TYPES } from '../lib/constants';
+import { CONNECTION_TYPES, HOTSPOT_ARRANGEMENTS, PREMISES_TYPES } from '../lib/constants';
 
 /**
  * Everything a tech can write down about a place, in the order they can
@@ -21,6 +21,7 @@ import { PREMISES_TYPES } from '../lib/constants';
  */
 export function PremisesForm({ value, onChange, gps, onGpsChange, sites, heading = 'The place' }) {
   const set = (field) => (text) => onChange({ ...value, [field]: text });
+  const isHotspot = value.connection_type === 'hotspot';
 
   return (
     <View>
@@ -51,15 +52,51 @@ export function PremisesForm({ value, onChange, gps, onGpsChange, sites, heading
         </>
       ) : null}
 
+      <Text style={styles.fieldLabel}>Connection</Text>
+      <View style={[styles.pillRow, { marginBottom: 14 }]}>
+        {CONNECTION_TYPES.map((type) => (
+          <Pill
+            key={type}
+            active={value.connection_type === type}
+            onPress={() =>
+              onChange({
+                ...value,
+                connection_type: type,
+                // Only a hotspot has one.
+                hotspot_arrangement: type === 'hotspot' ? value.hotspot_arrangement : null,
+              })
+            }
+          >
+            {label(type)}
+          </Pill>
+        ))}
+      </View>
+      {isHotspot ? (
+        <>
+          <Text style={styles.fieldLabel}>What does the host get?</Text>
+          <View style={[styles.pillRow, { marginBottom: 14 }]}>
+            {HOTSPOT_ARRANGEMENTS.map((arrangement) => (
+              <Pill
+                key={arrangement}
+                active={value.hotspot_arrangement === arrangement}
+                onPress={() => onChange({ ...value, hotspot_arrangement: arrangement })}
+              >
+                {arrangement === 'token' ? 'A token (we pay)' : 'A voucher (we give)'}
+              </Pill>
+            ))}
+          </View>
+        </>
+      ) : null}
+
       <TextField
-        label="Customer name"
+        label={isHotspot ? 'Contact person' : 'Customer name'}
         value={value.customer_name}
         onChangeText={set('customer_name')}
         placeholder="Nekesa Wanyonyi"
         autoCapitalize="words"
       />
       <TextField
-        label="Phone"
+        label={isHotspot ? 'Contact phone' : 'Phone'}
         value={value.customer_phone}
         onChangeText={set('customer_phone')}
         placeholder="07xx xxx xxx"
@@ -128,12 +165,16 @@ export const emptyPremises = () => ({
   address: '',
   customer_account_id: '',
   premises_type: 'household',
+  connection_type: 'pppoe',
+  hotspot_arrangement: null,
   site_id: null,
 });
 
 // Is there enough here to save? Mirrors premises_must_be_locatable.
 export const premisesLocatable = (value, gps) =>
-  Boolean(gps) || Boolean(value.address?.trim()) || Boolean(value.landmark?.trim());
+  (Boolean(gps) || Boolean(value.address?.trim()) || Boolean(value.landmark?.trim())) &&
+  // A hotspot has to say what its host gets; the API refuses one that does not.
+  (value.connection_type !== 'hotspot' || Boolean(value.hotspot_arrangement));
 
 // The form, as the API's premises body. Blank text fields are dropped rather
 // than sent as '' — the API reads an empty string as "not given", but leaving
@@ -148,6 +189,9 @@ export function toPremisesBody(value, gps) {
     address: text(value.address),
     customer_account_id: text(value.customer_account_id),
     premises_type: value.premises_type,
+    connection_type: value.connection_type,
+    hotspot_arrangement:
+      value.connection_type === 'hotspot' ? (value.hotspot_arrangement ?? undefined) : undefined,
     site_id: value.site_id ?? undefined,
     ...gpsFields(gps),
   };

@@ -1,6 +1,6 @@
 import { NumberInput, Select, TextArea, TextInput } from './fields';
 import { useSites } from '../hooks/useData';
-import { PREMISES_TYPES, label } from '../lib/constants';
+import { CONNECTION_TYPES, HOTSPOT_ARRANGEMENTS, PREMISES_TYPES, label } from '../lib/constants';
 
 // The fields on a premises, for the add and edit dialogs.
 //
@@ -22,6 +22,8 @@ export const emptyPremisesForm = () => ({
   landmark: '',
   customer_account_id: '',
   premises_type: 'household',
+  connection_type: 'pppoe',
+  hotspot_arrangement: '',
   site_id: '',
   gps_lat: '',
   gps_lng: '',
@@ -37,6 +39,8 @@ export function premisesFormFrom(premises) {
     landmark: premises.landmark ?? '',
     customer_account_id: premises.customer_account_id ?? '',
     premises_type: premises.premises_type ?? 'household',
+    connection_type: premises.connection_type ?? 'pppoe',
+    hotspot_arrangement: premises.hotspot_arrangement ?? '',
     site_id: premises.site_id ? String(premises.site_id) : '',
     gps_lat: premises.gps_lat ?? '',
     gps_lng: premises.gps_lng ?? '',
@@ -66,6 +70,11 @@ export function premisesFormBody(form, { nulls = false } = {}) {
     customer_account_id: text(form.customer_account_id),
     notes: text(form.notes),
     premises_type: form.premises_type,
+    connection_type: form.connection_type,
+    // Only a hotspot has one. On an edit a PPPoE premises sends null, so a
+    // premises reclassified away from hotspot does not keep the old value.
+    hotspot_arrangement:
+      form.connection_type === 'hotspot' ? form.hotspot_arrangement || undefined : blank,
     site_id: form.site_id === '' ? blank : Number(form.site_id),
     gps_lat: number(form.gps_lat),
     gps_lng: number(form.gps_lng),
@@ -74,6 +83,7 @@ export function premisesFormBody(form, { nulls = false } = {}) {
 
 export function PremisesFields({ form, set, errors = {} }) {
   const sites = useSites();
+  const isHotspot = form.connection_type === 'hotspot';
 
   return (
     <>
@@ -85,16 +95,44 @@ export function PremisesFields({ form, set, errors = {} }) {
         placeholder="No site"
         options={(sites.data ?? []).map((s) => ({ value: String(s.id), label: s.name }))}
       />
+      <Select
+        id="connection_type"
+        label="Connection"
+        value={form.connection_type}
+        onChange={set('connection_type')}
+        options={CONNECTION_TYPES.map((type) => ({ value: type, label: label(type) }))}
+        hint={
+          isHotspot
+            ? 'A hotspot can have more than one router.'
+            : 'An ordinary customer on PPPoE has one router.'
+        }
+      />
+      {isHotspot ? (
+        <Select
+          id="hotspot_arrangement"
+          label="Host gets"
+          value={form.hotspot_arrangement}
+          onChange={set('hotspot_arrangement')}
+          placeholder="Token or voucher?"
+          error={errors.hotspot_arrangement}
+          options={HOTSPOT_ARRANGEMENTS.map((a) => ({
+            value: a,
+            label: a === 'token' ? 'A token (we pay them)' : 'A voucher (we give them one)',
+          }))}
+        />
+      ) : null}
+      {/* For a hotspot the person on file is whoever looks after the place, not
+        * a subscriber, so the form says so. */}
       <TextInput
         id="customer_name"
-        label="Customer name"
+        label={isHotspot ? 'Contact person' : 'Customer name'}
         value={form.customer_name}
         onChange={set('customer_name')}
         placeholder="Nekesa Wanyonyi"
       />
       <TextInput
         id="customer_phone"
-        label="Phone"
+        label={isHotspot ? 'Contact phone' : 'Phone'}
         value={form.customer_phone}
         onChange={set('customer_phone')}
         placeholder="07xx xxx xxx"

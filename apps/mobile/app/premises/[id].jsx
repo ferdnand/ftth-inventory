@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { RefreshControl, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import {
-  useCurrentInstallation,
+  useActiveInstallations,
   usePremisesHistory,
   useWorkOrders,
 } from '../../src/api/queries';
@@ -33,7 +33,7 @@ export default function PremisesDetailScreen() {
   const router = useRouter();
 
   const history = usePremisesHistory(premisesId);
-  const current = useCurrentInstallation(premisesId);
+  const current = useActiveInstallations(premisesId);
   // A job already open here is what the tech should be adding to, rather than
   // starting a second one for the same visit.
   const openJobs = useWorkOrders({
@@ -62,7 +62,9 @@ export default function PremisesDetailScreen() {
   }
 
   const { premises, total_routers: totalRouters, replacement_count: replacements } = history.data;
-  const hasActive = current.data != null;
+  const routers = current.data ?? [];
+  const hasActive = routers.length > 0;
+  const isHotspot = premises.connection_type === 'hotspot';
   const liveJob = (openJobs.data ?? [])[0] ?? null;
 
   return (
@@ -71,7 +73,10 @@ export default function PremisesDetailScreen() {
       title={premises.label}
       sub={
         [
-          premises.customer_name,
+          // For a hotspot this is the contact person, not a subscriber.
+          isHotspot && premises.customer_name
+            ? `Contact: ${premises.customer_name}`
+            : premises.customer_name,
           premises.site_name,
           premises.customer_account_id ? `Account ${premises.customer_account_id}` : null,
         ]
@@ -99,7 +104,15 @@ export default function PremisesDetailScreen() {
 
       <SectionLabel>The place</SectionLabel>
       <Card>
-        <Text style={styles.itemMeta}>{label(premises.premises_type)}</Text>
+        <Text style={styles.itemMeta}>
+          {label(premises.connection_type)} · {label(premises.premises_type)}
+        </Text>
+        {isHotspot ? (
+          <Text style={styles.itemMeta}>Host gets: {label(premises.hotspot_arrangement)}</Text>
+        ) : null}
+        {isHotspot && premises.customer_name ? (
+          <Text style={styles.itemMeta}>Contact: {premises.customer_name}</Text>
+        ) : null}
         {premises.customer_phone ? (
           <Text style={styles.itemMeta}>{premises.customer_phone}</Text>
         ) : null}
@@ -117,7 +130,9 @@ export default function PremisesDetailScreen() {
         </Text>
       </Card>
 
-      <SectionLabel>Currently installed</SectionLabel>
+      <SectionLabel>
+        {isHotspot ? `Currently installed · ${routers.length}` : 'Currently installed'}
+      </SectionLabel>
       {current.isPending ? (
         <Text style={styles.hint}>Checking…</Text>
       ) : current.isError ? (
@@ -127,22 +142,24 @@ export default function PremisesDetailScreen() {
           Nothing is installed at this address right now.
         </EmptyState>
       ) : (
-        <Card flat>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.itemName}>{current.data.item_name}</Text>
-            <Text style={styles.itemMeta}>{current.data.serial_number}</Text>
-            <Text style={styles.itemMeta}>{current.data.mac_address ?? 'no MAC recorded'}</Text>
-            <Text style={[styles.serialStatus, { marginTop: 4 }]}>
-              Installed {formatDate(current.data.installed_at)} by {current.data.installed_by_name}
-            </Text>
-            {current.data.services?.length ? (
+        routers.map((r) => (
+          <Card flat key={r.installation_id}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemName}>{r.item_name}</Text>
+              <Text style={styles.itemMeta}>{r.serial_number}</Text>
+              <Text style={styles.itemMeta}>{r.mac_address ?? 'no MAC recorded'}</Text>
               <Text style={[styles.serialStatus, { marginTop: 4 }]}>
-                Work: {current.data.services.map(formatServiceLine).join(' · ')}
+                Installed {formatDate(r.installed_at)} by {r.installed_by_name}
               </Text>
-            ) : null}
-          </View>
-          <Badge variant="installed">Active</Badge>
-        </Card>
+              {r.services?.length ? (
+                <Text style={[styles.serialStatus, { marginTop: 4 }]}>
+                  Work: {r.services.map(formatServiceLine).join(' · ')}
+                </Text>
+              ) : null}
+            </View>
+            <Badge variant="installed">Active</Badge>
+          </Card>
+        ))
       )}
 
       <SectionLabel>Site history</SectionLabel>
@@ -221,22 +238,39 @@ export default function PremisesDetailScreen() {
         <PrimaryButton onPress={() => router.push('/jobs/new')}>Start a job here</PrimaryButton>
       )}
 
-      {/* One hardware action, chosen by what is actually there — offering both
-        * would guarantee one of them 404s or 409s. */}
-      {hasActive ? (
-        <>
-          <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/replace`)}>
-            Replace router
-          </SecondaryButton>
-          <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/work`)}>
-            {current.data.services?.length ? 'Edit recorded work' : 'Record work performed'}
-          </SecondaryButton>
-        </>
-      ) : (
+      {/* Hardware actions follow what is actually there. A PPPoE premises with a
+        * router can only be replaced; one without can only be installed. A
+        * hotspot can do both — add another router, or swap one of several — so it
+        * is offered each, and every swap or work record says which router. */}
+      {!hasActive || isHotspot ? (
         <SecondaryButton onPress={() => router.push(`/premises/${premisesId}/install`)}>
-          Install router
+          {hasActive ? 'Install another router' : 'Install router'}
         </SecondaryButton>
-      )}
+      ) : null}
+      {routers.map((r) => (
+        <View key={r.installation_id}>
+          <SecondaryButton
+            onPress={() =>
+              router.push(`/premises/${premisesId}/replace?installation=${r.installation_id}`)
+            }
+          >
+            {routers.length > 1 ? `Replace ${r.serial_number}` : 'Replace router'}
+          </SecondaryButton>
+          <SecondaryButton
+            onPress={() =>
+              router.push(`/premises/${premisesId}/work?installation=${r.installation_id}`)
+            }
+          >
+            {r.services?.length
+              ? routers.length > 1
+                ? `Edit work on ${r.serial_number}`
+                : 'Edit recorded work'
+              : routers.length > 1
+                ? `Record work on ${r.serial_number}`
+                : 'Record work performed'}
+          </SecondaryButton>
+        </View>
+      ))}
       <SecondaryButton onPress={() => router.back()}>Back</SecondaryButton>
     </Screen>
   );

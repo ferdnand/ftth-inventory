@@ -90,10 +90,10 @@ export const useTransactions = (params, options = {}) =>
 
 // --- Premises -------------------------------------------------------------
 
-export const usePremisesSearch = (query, siteId) =>
+export const usePremisesSearch = (query, siteId, includeInactive = false) =>
   useQuery({
-    queryKey: keys.premisesSearch(query, siteId),
-    queryFn: ({ signal }) => api.searchPremises(query, signal, siteId),
+    queryKey: [...keys.premisesSearch(query, siteId), includeInactive],
+    queryFn: ({ signal }) => api.searchPremises(query, signal, siteId, includeInactive),
     select: (data) => data.results,
     // The API returns { results: [] } with a 200 under 2 characters, and the UI
     // renders a hint rather than an empty state — so don't even ask.
@@ -112,7 +112,8 @@ export const useCurrentInstallation = (premisesId) =>
   useQuery({
     queryKey: keys.currentInstallation(premisesId),
     queryFn: () => api.currentInstallation(premisesId),
-    select: (data) => data.current,
+    // Every router live at the premises: a hotspot may have several.
+    select: (data) => data.installations ?? (data.current ? [data.current] : []),
     enabled: Boolean(premisesId),
   });
 
@@ -345,6 +346,14 @@ export function useUpdatePremises() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ id, ...body }) => api.updatePremises(id, body),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['premises'] }),
+  });
+}
+
+export function useDeletePremises() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (id) => api.deletePremises(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['premises'] }),
   });
 }

@@ -590,9 +590,9 @@ curl -s localhost:4000/api/installations \
 { "error": "An active router already exists at this premises. Use /replace instead." }
 ```
 
-That 409 comes from an app-level check *and* is backed by
-`uq_active_installation_per_premises`, a partial unique index. The app check
-exists to give you that sentence; the index is the guarantee.
+That 409 comes from an app-level check *and* is backed by the database
+(`uq_active_installation_per_premises`, now raised by a trigger — see Part 7b).
+The app check exists to give you that sentence; the database is the guarantee.
 
 Two more guards worth trying:
 
@@ -754,6 +754,51 @@ The first call returns `201`. The second returns `200` with
 `"replayed": true` and the *same* installation — not a second swap. Without this,
 a flaky connection could double-install a router, and `transactions` is
 append-only by design, so there would be no cleanup path.
+
+---
+
+## Part 7b — Hotspots, plots and flats, and former clients
+
+Every premises is either **PPPoE** (the default: an ordinary customer, one router)
+or a **hotspot** (a kiosk, stall or compound hosting public wifi). Choose it under
+**Connection** when adding or editing a premises, on the web dashboard or in the
+field app.
+
+**Hotspots differ in three ways:**
+
+- They can have **more than one router**. Installing again at a hotspot adds a
+  router rather than hitting the 409 above; the premises screen then lists every
+  router, each with its own *Replace* and *Record work*. With several routers, a
+  replacement has to say which one is coming out (`installation_id`), and the
+  mobile screen asks.
+- The person on file is the **contact person**, not a subscriber — the forms and
+  screens relabel *Customer name / Phone* accordingly.
+- A hotspot **must say what its host gets**: a **token** (we pay them) or a
+  **voucher** (we give them one).
+
+```bash
+curl -s localhost:4000/api/premises \
+  -H "Authorization: Bearer $STAFF" -H 'Content-Type: application/json' \
+  -d '{"landmark": "Mama Pima kiosk", "site_id": 1, "customer_name": "Pima Wafula",
+       "customer_phone": "0712000111", "connection_type": "hotspot",
+       "hotspot_arrangement": "token"}'
+```
+
+Leave `hotspot_arrangement` out and you get a 400 saying it must be `token` or
+`voucher`. Send one for a PPPoE premises and you also get a 400.
+
+**Kind of premises** now includes **Plot** and **Flat**, alongside Household,
+Business, Institution and Multi-dwelling.
+
+**A customer who has left.** On the premises page:
+
+- **Mark as former client** (warehouse staff, PMs, admins) hides it from the
+  lists and search and stops new jobs or installs there. The record and every job
+  and router stay. *Include former clients* on the Premises page shows it again,
+  and **Reinstate client** undoes it.
+- **Delete…** (admins only) removes it permanently, but only if it never had a job
+  or a router — a premises added by mistake. Anything with history answers 409 and
+  tells you to mark it a former client instead.
 
 ---
 

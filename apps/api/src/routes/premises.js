@@ -1,8 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../lib/db');
-const { asyncHandler, badRequest, forbidden, notFound } = require('../lib/errors');
-const { intId, optionalIntId, limit } = require('../lib/validate');
+const { asyncHandler, badRequest, conflict, forbidden, notFound } = require('../lib/errors');
+const { intId, optionalIntId, optionalBoolean, limit } = require('../lib/validate');
+const { requireRole } = require('../middleware/auth');
 const { serviceLinesByInstallation } = require('../lib/jobLines');
 const {
   FIELDS,
@@ -10,6 +11,7 @@ const {
   parsePremisesFields,
   assertGpsCoherent,
   assertLocatable,
+  assertHotspotCoherent,
   assertIsSite,
   insertPremises,
   shapePremises,
@@ -42,6 +44,8 @@ router.get(
       params.push(siteId);
       siteClause = `AND cp.site_id = $${params.length}`;
     }
+    // Former clients stay on record but out of the way, unless asked for.
+    if (req.query.include_inactive !== 'true') siteClause += ' AND cp.is_active';
 
     // Full text (which is what the GIN index is for) OR'd with a substring
     // match, so both "Nasianda" and a half-typed phone number find the row.
@@ -73,14 +77,16 @@ router.get(
     const max = limit(req.query.limit, 100, 500);
 
     const params = [max];
-    let siteClause = '';
+    const clauses = [];
     if (siteId) {
       params.push(siteId);
-      siteClause = `WHERE cp.site_id = $${params.length}`;
+      clauses.push(`cp.site_id = $${params.length}`);
     }
+    if (req.query.include_inactive !== 'true') clauses.push('cp.is_active');
+    const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
 
     const result = await db.query(
-      `${PREMISES_SELECT} ${siteClause} ORDER BY cp.created_at DESC LIMIT $1`,
+      `${PREMISES_SELECT} ${where} ORDER BY cp.created_at DESC LIMIT $1`,
       params
     );
     res.json({ premises: result.rows.map(shapePremises) });
@@ -124,14 +130,17 @@ router.patch(
     const id = intId(req.params.id, 'id');
 
     const existing = await db.query(
-      'SELECT id, address, landmark, gps_lat, gps_lng FROM customer_premises WHERE id = $1',
+      `SELECT id, address, landmark, gps_lat, gps_lng, connection_type, hotspot_arrangement
+       FROM customer_premises WHERE id = $1`,
       [id]
     );
     if (existing.rows.length === 0) throw notFound('Premises not found');
     const current = existing.rows[0];
 
     const GPS_FIELDS = ['gps_lat', 'gps_lng', 'gps_accuracy_m', 'gps_captured_at'];
-    const touched = Object.keys(req.body ?? {}).filter((k) => k in FIELDS);
+    // `is_active` is not in FIELDS because a premises is never created inactive;
+    // it is read here, and counts as a non-GPS change like the rest.
+    const touched = Object.keys(req.body ?? {}).filter((k) => k in FIELDS || k === 'is_active');
     const nonGps = touched.filter((k) => !GPS_FIELDS.includes(k));
 
     if (nonGps.length > 0 && !['warehouse_staff', 'pm', 'admin'].includes(req.user.role)) {
@@ -141,6 +150,40 @@ router.patch(
     }
 
     const values = parsePremisesFields(req.body ?? {});
+    if (req.body?.is_active !== undefined) {
+      values.is_active = optionalBoolean(req.body.is_active, 'is_active');
+    }
+
+    // Reclassifying: a hotspot says what its host gets, and a premises that stops
+    // being one drops the arrangement with it rather than making the caller
+    // remember to clear it.
+    if ('connection_type' in values || 'hotspot_arrangement' in values) {
+      const connection = values.connection_type ?? current.connection_type;
+      if (connection !== 'hotspot' && !('hotspot_arrangement' in values)) {
+        values.hotspot_arrangement = null;
+      }
+      assertHotspotCoherent(
+        connection,
+        'hotspot_arrangement' in values ? values.hotspot_arrangement : current.hotspot_arrangement
+      );
+
+      // Several routers are only allowed at a hotspot, so a premises carrying
+      // more than one cannot stop being one until all but one are removed.
+      if (current.connection_type === 'hotspot' && connection !== 'hotspot') {
+        const active = await db.query(
+          `SELECT COUNT(*)::int AS n FROM installations
+           WHERE customer_premises_id = $1 AND removed_at IS NULL`,
+          [id]
+        );
+        if (active.rows[0].n > 1) {
+          throw conflict(
+            `This hotspot has ${active.rows[0].n} routers installed. ` +
+              'Replace or remove all but one before changing it to PPPoE.'
+          );
+        }
+      }
+    }
+
     if (Object.keys(values).length === 0) {
       throw badRequest('No editable fields were provided');
     }
@@ -223,15 +266,24 @@ router.get(
        JOIN item_instances ii ON ii.id = inst.item_instance_id
        JOIN items i ON i.id = ii.item_id
        JOIN users installer ON installer.id = inst.installed_by
-       WHERE inst.customer_premises_id = $1 AND inst.removed_at IS NULL`,
+       WHERE inst.customer_premises_id = $1 AND inst.removed_at IS NULL
+       ORDER BY inst.installed_at, inst.id`,
       [id]
     );
-    const current = result.rows[0] || null;
-    if (current) {
-      const grouped = await serviceLinesByInstallation(db, [Number(current.installation_id)]);
-      current.services = grouped[Number(current.installation_id)] ?? [];
+
+    // One query for every router's labour, not one per router.
+    const grouped = await serviceLinesByInstallation(
+      db,
+      result.rows.map((row) => Number(row.installation_id))
+    );
+    for (const row of result.rows) {
+      row.services = grouped[Number(row.installation_id)] ?? [];
     }
-    res.json({ current });
+
+    // `installations` is every router now live here — a hotspot may have several.
+    // `current` stays as the first of them (null when there are none) so a
+    // client written for one router per premises keeps working.
+    res.json({ current: result.rows[0] ?? null, installations: result.rows });
   })
 );
 
@@ -271,9 +323,14 @@ router.get(
       row.services = services[Number(row.id)] ?? [];
     }
 
-    // One row per installation, so the first router is not a "replacement".
+    // One row per installation, so the first router is not a "replacement". A
+    // hotspot's later routers are additions, not swaps, so there the count is the
+    // routers that have actually been taken out.
     const totalRouters = timeline.rows.length;
-    const replacementCount = Math.max(totalRouters - 1, 0);
+    const isHotspot = premises.rows[0].connection_type === 'hotspot';
+    const replacementCount = isHotspot
+      ? timeline.rows.filter((row) => row.removed_at).length
+      : Math.max(totalRouters - 1, 0);
 
     res.json({
       premises: shapePremises(premises.rows[0]),
@@ -281,6 +338,58 @@ router.get(
       replacement_count: replacementCount,
       timeline: timeline.rows,
     });
+  })
+);
+
+// DELETE /api/premises/:id   (admin only)
+//
+// For a premises that was added by mistake, or that never became a client.
+// Once it has a job, a router or a stock movement it is part of the cost and
+// stock history, and deleting it would take those with it — so the answer is
+// 409, and the way to retire it is PATCH { is_active: false }, which marks it a
+// former client: it leaves every list and picker but the record stays.
+router.delete(
+  '/:id',
+  requireRole('admin'),
+  asyncHandler(async (req, res) => {
+    const id = intId(req.params.id, 'id');
+
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const found = await client.query(
+        'SELECT id FROM customer_premises WHERE id = $1 FOR UPDATE',
+        [id]
+      );
+      if (found.rows.length === 0) throw notFound('Premises not found');
+
+      const refs = await client.query(
+        `SELECT
+           (SELECT COUNT(*) FROM work_orders WHERE customer_premises_id = $1)::int AS jobs,
+           (SELECT COUNT(*) FROM installations WHERE customer_premises_id = $1)::int AS installs`,
+        [id]
+      );
+      const { jobs, installs } = refs.rows[0];
+      const reasons = [];
+      if (jobs) reasons.push(`${jobs} job(s)`);
+      if (installs) reasons.push(`${installs} installed router(s)`);
+      if (reasons.length > 0) {
+        throw conflict(
+          `This premises cannot be deleted because it has ${reasons.join(' and ')}. ` +
+            'Mark it as a former client instead — the record stays but it leaves the lists.'
+        );
+      }
+
+      await client.query('DELETE FROM customer_premises WHERE id = $1', [id]);
+      await client.query('COMMIT');
+      res.json({ deleted: true, id });
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   })
 );
 

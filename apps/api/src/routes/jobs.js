@@ -50,7 +50,8 @@ const { isFieldTech, requireRole } = require('../middleware/auth');
 const JOB_SELECT = `
   SELECT wo.*,
          cp.address, cp.landmark, cp.village, cp.customer_name, cp.customer_phone,
-         cp.customer_account_id, cp.premises_type, cp.notes AS premises_notes,
+         cp.customer_account_id, cp.premises_type, cp.connection_type,
+         cp.hotspot_arrangement, cp.notes AS premises_notes,
          cp.gps_lat, cp.gps_lng, cp.gps_accuracy_m,
          site.name AS site_name,
          tech.name AS assigned_tech_name,
@@ -75,6 +76,8 @@ function shapeJob(row) {
     customer_phone: row.customer_phone,
     customer_account_id: row.customer_account_id,
     premises_type: row.premises_type,
+    connection_type: row.connection_type,
+    hotspot_arrangement: row.hotspot_arrangement,
     notes: row.premises_notes,
     gps_lat: row.gps_lat,
     gps_lng: row.gps_lng,
@@ -351,7 +354,7 @@ router.post(
       } else {
         premisesId = intId(req.body.customer_premises_id, 'customer_premises_id');
         const found = await client.query(
-          `SELECT cp.id, cp.site_id, site.name AS site_name
+          `SELECT cp.id, cp.site_id, cp.is_active, site.name AS site_name
            FROM customer_premises cp
            LEFT JOIN locations site ON site.id = cp.site_id
            WHERE cp.id = $1
@@ -360,6 +363,9 @@ router.post(
         );
         if (found.rows.length === 0) throw notFound('customer_premises not found');
         const existing = found.rows[0];
+        if (!existing.is_active) {
+          throw conflict('That premises is a former client — reinstate it before opening a job');
+        }
 
         if (
           requestedSiteId &&

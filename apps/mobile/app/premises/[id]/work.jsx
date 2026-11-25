@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../../src/auth/AuthProvider';
 import {
-  useCurrentInstallation,
+  useActiveInstallations,
   usePremisesHistory,
   useServices,
   useSetInstallationServices,
@@ -30,13 +30,13 @@ import { formatPremisesCode } from '../../../src/lib/format';
 // only while it is still the active one. Both are enforced there; this screen
 // just avoids offering the action when it would obviously fail.
 export default function RecordWorkScreen() {
-  const { id } = useLocalSearchParams();
+  const { id, installation: installationParam } = useLocalSearchParams();
   const premisesId = Number(id);
   const router = useRouter();
   const { user } = useAuth();
 
   const history = usePremisesHistory(premisesId);
-  const current = useCurrentInstallation(premisesId);
+  const current = useActiveInstallations(premisesId);
   const services = useServices();
   const save = useSetInstallationServices();
 
@@ -46,7 +46,12 @@ export default function RecordWorkScreen() {
   if (current.isPending || services.isPending) return <Loading label="Loading" />;
 
   const address = history.data?.premises?.label ?? `Premises ${premisesId}`;
-  const installation = current.data;
+  // A hotspot has several routers, and the premises screen says which one this
+  // is for. Without it (an old link) the first stands in.
+  const installation =
+    (current.data ?? []).find((r) => String(r.installation_id) === String(installationParam)) ??
+    (current.data ?? [])[0] ??
+    null;
 
   if (!installation) {
     return (

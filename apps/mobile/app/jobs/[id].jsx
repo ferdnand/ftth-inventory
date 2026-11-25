@@ -212,6 +212,14 @@ export default function JobScreen() {
           Swap the router out
         </SecondaryButton>
       ) : null}
+      {/* A hotspot can carry several routers, so one fitted is not the end of it. */}
+      {installed.length > 0 && live && premises.connection_type === 'hotspot' ? (
+        <SecondaryButton
+          onPress={() => router.push(`/premises/${premises.id}/install?job=${jobId}`)}
+        >
+          Fit another router
+        </SecondaryButton>
+      ) : null}
 
       {/* --- The three kinds of line ------------------------------------- */}
       <SectionLabel>What the job used and cost</SectionLabel>
@@ -220,7 +228,7 @@ export default function JobScreen() {
         title="Materials"
         meta={
           materials.length === 0
-            ? 'Cable, sleeves, connectors — out of your van'
+            ? 'Cable, sleeves, connectors — out of the site’s stock'
             : materials
                 .map(
                   (line) =>

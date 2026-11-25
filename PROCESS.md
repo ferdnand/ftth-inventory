@@ -281,6 +281,8 @@ What is covered, in rough order of importance:
 | Job + premises | A job and a premises are created in one transaction, and an unfindable premises rolls the job back with it |
 | Materials | Recording draws stock down; re-sending the identical list moves nothing; a correction returns the difference to the stock it came from |
 | Materials | With no `from_location_id`, materials come out of the **job's site**; a tech may use their own van or the job's site and nothing else |
+| Hotspots | Hotspot needs a token/voucher; several routers allowed; replace names which; PPPoE still takes one (also in the database) |
+| Former clients | Delete only without history (admin); former clients leave lists and cannot take new jobs/installs |
 | Job sites | A job takes its premises' site, refuses a different one, files an un-sited premises under the job's site, and is listable per site |
 | Materials | A serialized item is refused as a material, by the route **and** by `trg_job_material_is_bulk` |
 | Costs | The total is the four buckets summed, and unpriced lines are counted rather than treated as free |
@@ -333,9 +335,13 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 ### Design decisions worth preserving
 
 - **Invariants live in the database, not only in JS.** Examples:
-  - `uq_active_installation_per_premises` — a partial unique index on
-    `(customer_premises_id) WHERE removed_at IS NULL`, so a premises can never
-    hold two active routers.
+  - `uq_active_installation_per_premises` — one active router per premises,
+    unless it is a hotspot. Originally a partial unique index; 016 replaced it
+    with `trg_one_active_router_unless_hotspot`, because whether a premises may
+    hold several routers depends on its `connection_type`, which lives on another
+    table. The trigger locks the premises row, so two techs installing at once
+    still cannot both pass, and it raises under the old constraint name so the
+    API's message for it is unchanged.
   - `removal_reason_required_if_removed` — a removal cannot be recorded without
     a reason.
   - `stock_quantity_non_negative`, `transaction_serialized_xor_bulk`,
@@ -618,9 +624,13 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   │                   items.unit_cost, services.unit_rate.
 │   │   │   │   │                   installation_services folds into job_services
 │   │   │   │   ├── 014_location_active.sql  Retiring a location
-│   │   │   │   └── 015_job_site.sql
-│   │   │   │                       work_orders.site_id (backfilled from the
-│   │   │   │                       premises) + a trigger keeping it in step
+│   │   │   │   ├── 015_job_site.sql
+│   │   │   │   │                   work_orders.site_id (backfilled from the
+│   │   │   │   │                   premises) + a trigger keeping it in step
+│   │   │   │   └── 016_hotspots_and_former_clients.sql
+│   │   │   │                       premises: PPPoE/hotspot, token/voucher,
+│   │   │   │                       plot + flat, is_active; several routers
+│   │   │   │                       allowed at a hotspot (trigger)
 │   │   │   ├── create-admin.js     Bootstrap/recover an admin (no API needed)
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
@@ -826,6 +836,27 @@ Recorded here so they are not rediscovered.
   dependency in places that have none, and the number is what a tech reads out
   over a phone. `gps_accuracy_m` is recorded so a bad fix can be told from a
   good one; nothing refuses a bad one, because a rough pin beats no pin.
+- **A premises is PPPoE or a hotspot, and that changes three rules.** (1) A
+  hotspot may carry several active routers; a PPPoE premises one. (2) A hotspot
+  must record `hotspot_arrangement` — `token` (we pay the host) or `voucher` (we
+  give them one) — and nothing else may carry it; `hotspot_arrangement_matches_connection`
+  enforces both ways, and moving a premises off hotspot clears it for you. (3) For
+  a hotspot the customer name and phone are the **contact person**; there is no
+  separate column, only different wording in the clients. `GET /premises/:id/current`
+  returns `installations` (all live routers) as well as `current` (the first, kept
+  for older clients), and `POST /installations/:premisesId/replace` takes an
+  `installation_id` — optional with one router, required with several, because
+  guessing would pull the wrong one off the wall. A hotspot's `replacement_count`
+  counts routers taken out, since its extra routers are additions, not swaps. A
+  hotspot with more than one router cannot be reclassified as PPPoE until it is
+  down to one. There is still no plain "remove a router" action — only replace.
+- **A premises that stops being a client is marked, not deleted — unless it never
+  had any history.** `DELETE /api/premises/:id` is admin-only and refuses (409) a
+  premises with a job or an installation, because those rows carry the cost and
+  stock history. The route for a real former client is `PATCH { is_active: false }`
+  (warehouse staff, PMs, admins): it leaves every list, search and picker
+  (`?include_inactive=true` brings it back) and refuses new jobs and installs until
+  reinstated. A router still installed at a former client stays `installed`.
 - **Multi-item transfers are several requests, not one transaction.** The
   Transfer page's bulk tab takes any number of item/quantity lines and sends one
   `POST /api/transactions` per line (as the serialized tab already did per unit),

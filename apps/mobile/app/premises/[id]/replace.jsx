@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useAuth } from '../../../src/auth/AuthProvider';
 import {
-  useCurrentInstallation,
+  useActiveInstallations,
   usePremisesHistory,
   useReplaceRouter,
   useServices,
@@ -38,13 +38,13 @@ import { REMOVAL_REASONS, REMOVAL_REASON_LABELS, label } from '../../../src/lib/
 export default function ReplaceRouterScreen() {
   // `job` arrives when this screen was opened from a job already running, so
   // the swap lands on that job rather than opening a second one for one visit.
-  const { id, job } = useLocalSearchParams();
+  const { id, job, installation: installationParam } = useLocalSearchParams();
   const premisesId = Number(id);
   const fromJobId = job ? Number(job) : null;
   const router = useRouter();
   const { user } = useAuth();
 
-  const current = useCurrentInstallation(premisesId);
+  const current = useActiveInstallations(premisesId);
   const history = usePremisesHistory(premisesId);
   const stock = useStock(user?.assigned_location_id);
   const jobs = useWorkOrders({ assigned_tech_id: 'me', customer_premises_id: premisesId });
@@ -55,6 +55,9 @@ export default function ReplaceRouterScreen() {
   const [reason, setReason] = useState(null);
   const [work, setWork] = useState({});
   const [workOrderId, setWorkOrderId] = useState(fromJobId);
+  // Which router is coming out. A hotspot may have several, and the API will not
+  // guess; a PPPoE premises has the one.
+  const [chosenId, setChosenId] = useState(installationParam ? Number(installationParam) : null);
   const [error, setError] = useState(null);
   const [idempotencyKey] = useState(newIdempotencyKey);
 
@@ -64,7 +67,12 @@ export default function ReplaceRouterScreen() {
 
   // The API 404s here when nothing is installed. Rather than showing that as an
   // error, route to the action that does apply.
-  if (current.data == null) {
+  const routers = current.data ?? [];
+  const target =
+    routers.find((r) => r.installation_id === (chosenId ?? (routers.length === 1 ? routers[0].installation_id : null))) ??
+    null;
+
+  if (routers.length === 0) {
     return (
       <Screen eyebrow={formatPremisesCode(premisesId)} title="Replace router" sub={address}>
         <Banner tone="info">
@@ -85,6 +93,7 @@ export default function ReplaceRouterScreen() {
         premisesId,
         new_item_instance_id: unit.id,
         removal_reason: reason,
+        installation_id: target.installation_id,
         work_order_id: workOrderId ?? undefined,
         // Recorded against the NEW installation: the work was done today, and
         // the visit being closed out had its own.
@@ -99,7 +108,7 @@ export default function ReplaceRouterScreen() {
     }
   }
 
-  const ready = Boolean(unit && reason) && serviceLinesReady(work, services.data);
+  const ready = Boolean(unit && reason && target) && serviceLinesReady(work, services.data);
 
   return (
     <Screen eyebrow={formatPremisesCode(premisesId)} title="Replace router" sub={address}>
@@ -132,18 +141,35 @@ export default function ReplaceRouterScreen() {
         </>
       ) : null}
 
-      <SectionLabel>Currently installed</SectionLabel>
-      <Card flat>
-        <View style={{ flex: 1 }}>
-          <Text style={styles.itemName}>{current.data.item_name}</Text>
-          <Text style={styles.itemMeta}>{current.data.serial_number}</Text>
-          <Text style={styles.itemMeta}>{current.data.mac_address ?? 'no MAC recorded'}</Text>
-          <Text style={[styles.serialStatus, { marginTop: 4 }]}>
-            Installed {formatDate(current.data.installed_at)}
-          </Text>
-        </View>
-        <Badge variant="installed">Active</Badge>
-      </Card>
+      <SectionLabel>
+        {routers.length > 1 ? 'Which router is coming out?' : 'Currently installed'}
+      </SectionLabel>
+      {routers.map((r) => (
+        <Pressable
+          key={r.installation_id}
+          disabled={routers.length === 1}
+          onPress={() => setChosenId(r.installation_id)}
+          accessibilityRole={routers.length > 1 ? 'radio' : undefined}
+          accessibilityState={{ selected: target?.installation_id === r.installation_id }}
+          style={
+            routers.length > 1 && target?.installation_id === r.installation_id
+              ? styles.resultItemSelected
+              : undefined
+          }
+        >
+          <Card flat>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.itemName}>{r.item_name}</Text>
+              <Text style={styles.itemMeta}>{r.serial_number}</Text>
+              <Text style={styles.itemMeta}>{r.mac_address ?? 'no MAC recorded'}</Text>
+              <Text style={[styles.serialStatus, { marginTop: 4 }]}>
+                Installed {formatDate(r.installed_at)}
+              </Text>
+            </View>
+            <Badge variant="installed">Active</Badge>
+          </Card>
+        </Pressable>
+      ))}
 
       <SectionLabel>Replace with</SectionLabel>
       {/* The mockup has free-text serial and MAC inputs here, but the API needs

@@ -112,15 +112,21 @@ async function servicesFor(installationId, lines) {
   return grouped[installationId] ?? [];
 }
 
-async function assertPremisesExists(client, premisesId) {
-  const result = await client.query('SELECT id FROM customer_premises WHERE id = $1', [
-    premisesId,
-  ]);
+// Returns the premises row, locked: a hotspot's second router and a PPPoE
+// customer's first one are decided by what is already installed, and two techs
+// arriving together must not both see "nothing here yet".
+async function lockPremises(client, premisesId) {
+  const result = await client.query(
+    `SELECT id, connection_type, is_active FROM customer_premises WHERE id = $1 FOR UPDATE`,
+    [premisesId]
+  );
   if (result.rows.length === 0) throw notFound('customer_premises not found');
+  return result.rows[0];
 }
 
 // POST /api/installations
-// First-time install at a premises with no active router.
+// Installs a router at a premises. A PPPoE premises takes one; a hotspot may take
+// several, so installing again at a hotspot adds a router instead of conflicting.
 // body: { customer_premises_id, item_instance_id, work_order_id?, services?, idempotency_key? }
 //   services: [{ service_id, quantity?, unit_rate?, notes? }] — labour on this visit
 //
@@ -156,20 +162,25 @@ router.post(
         return res.status(200).json({ installation: replay, replayed: true });
       }
 
-      await assertPremisesExists(client, premisesId);
+      const premises = await lockPremises(client, premisesId);
+      if (!premises.is_active) {
+        throw conflict('This premises is a former client — reinstate it before installing here');
+      }
 
-      // Guard: no active installation should already exist here. The partial
-      // unique index uq_active_installation_per_premises is the real guarantee;
-      // this check exists to return a helpful 409 instead of a constraint error.
-      const existing = await client.query(
-        `SELECT id FROM installations
-         WHERE customer_premises_id = $1 AND removed_at IS NULL`,
-        [premisesId]
-      );
-      if (existing.rows.length > 0) {
-        throw conflict(
-          'An active router already exists at this premises. Use /replace instead.'
+      // Guard: a PPPoE premises takes one active router. The trigger
+      // trg_one_active_router_unless_hotspot is the real guarantee; this check
+      // exists to return a helpful 409 instead of a constraint error.
+      if (premises.connection_type !== 'hotspot') {
+        const existing = await client.query(
+          `SELECT id FROM installations
+           WHERE customer_premises_id = $1 AND removed_at IS NULL`,
+          [premisesId]
         );
+        if (existing.rows.length > 0) {
+          throw conflict(
+            'An active router already exists at this premises. Use /replace instead.'
+          );
+        }
       }
 
       const instance = await lockInstance(client, instanceId);
@@ -242,8 +253,12 @@ router.post(
 
 // POST /api/installations/:premisesId/replace
 // Removes the active router (reason required) and installs a new one.
-// body: { new_item_instance_id, removal_reason, work_order_id?,
+// body: { new_item_instance_id, removal_reason, installation_id?, work_order_id?,
 //         return_to_location_id?, services?, idempotency_key? }
+//
+// `installation_id` says which router to take out. It can be left out when the
+// premises has exactly one; a hotspot with several has to say, because guessing
+// would pull the wrong one off the wall.
 //
 // `services` records the labour of THIS visit, against the job the replacement
 // belongs to rather than the one being closed out — the work was done today.
@@ -263,6 +278,7 @@ router.post(
     const newInstanceId = intId(req.body.new_item_instance_id, 'new_item_instance_id');
     const removalReason = oneOf(req.body.removal_reason, REMOVAL_REASONS, 'removal_reason');
     const workOrderId = optionalIntId(req.body.work_order_id, 'work_order_id');
+    const installationId = optionalIntId(req.body.installation_id, 'installation_id');
     const returnTo = resolveReturnLocation(
       req.user,
       optionalIntId(req.body.return_to_location_id, 'return_to_location_id')
@@ -285,13 +301,28 @@ router.post(
       const active = await client.query(
         `SELECT id, item_instance_id FROM installations
          WHERE customer_premises_id = $1 AND removed_at IS NULL
+         ORDER BY installed_at, id
          FOR UPDATE`,
         [premisesId]
       );
       if (active.rows.length === 0) {
         throw notFound('No active router found at this premises');
       }
-      const activeInstallation = active.rows[0];
+
+      let activeInstallation;
+      if (installationId) {
+        activeInstallation = active.rows.find((r) => Number(r.id) === installationId);
+        if (!activeInstallation) {
+          throw notFound('That router is not installed at this premises');
+        }
+      } else if (active.rows.length > 1) {
+        throw badRequest(
+          `This premises has ${active.rows.length} routers installed — ` +
+            'send installation_id to say which one is being replaced'
+        );
+      } else {
+        activeInstallation = active.rows[0];
+      }
 
       const newInstance = await lockInstance(client, newInstanceId);
       assertInstallable(newInstance);

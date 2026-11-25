@@ -60,7 +60,10 @@ export default function InstallAtPremisesScreen() {
   if (history.isPending || stock.isPending) return <Loading label="Loading" />;
 
   const address = history.data?.premises?.label ?? `Premises ${premisesId}`;
-  const alreadyInstalled = current.data != null;
+  // A hotspot takes several routers, so one already being there is no reason to
+  // send the tech to /replace — only a PPPoE premises has that rule.
+  const isHotspot = history.data?.premises?.connection_type === 'hotspot';
+  const alreadyInstalled = current.data != null && !isHotspot;
 
   async function onSubmit() {
     setError(null);
