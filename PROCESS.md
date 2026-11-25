@@ -281,6 +281,7 @@ What is covered, in rough order of importance:
 | Job + premises | A job and a premises are created in one transaction, and an unfindable premises rolls the job back with it |
 | Materials | Recording draws stock down; re-sending the identical list moves nothing; a correction returns the difference to the stock it came from |
 | Materials | With no `from_location_id`, materials come out of the **job's site**; a tech may use their own van or the job's site and nothing else |
+| Premises-less jobs | Only a new install, with a site and notes; attach later (edit, capture, or install); once only; same site; counts in cost reports |
 | Hotspots | Hotspot needs a token/voucher; several routers allowed; replace names which; PPPoE still takes one (also in the database) |
 | Former clients | Delete only without history (admin); former clients leave lists and cannot take new jobs/installs |
 | Job sites | A job takes its premises' site, refuses a different one, files an un-sited premises under the job's site, and is listable per site |
@@ -627,10 +628,12 @@ apps/web (React + Vite)          apps/mobile (Expo + expo-router)
 │   │   │   │   ├── 015_job_site.sql
 │   │   │   │   │                   work_orders.site_id (backfilled from the
 │   │   │   │   │                   premises) + a trigger keeping it in step
-│   │   │   │   └── 016_hotspots_and_former_clients.sql
-│   │   │   │                       premises: PPPoE/hotspot, token/voucher,
-│   │   │   │                       plot + flat, is_active; several routers
-│   │   │   │                       allowed at a hotspot (trigger)
+│   │   │   │   ├── 016_hotspots_and_former_clients.sql
+│   │   │   │   │                   premises: PPPoE/hotspot, token/voucher,
+│   │   │   │   │                   plot + flat, is_active; several routers
+│   │   │   │   │                   allowed at a hotspot (trigger)
+│   │   │   │   └── 017_job_premises_optional.sql
+│   │   │   │                       a new install may have no premises yet
 │   │   │   ├── create-admin.js     Bootstrap/recover an admin (no API needed)
 │   │   │   └── seed.js             Sample data + reference IDs + credentials
 │   │   ├── src/
@@ -850,6 +853,21 @@ Recorded here so they are not rediscovered.
   counts routers taken out, since its extra routers are additions, not swaps. A
   hotspot with more than one router cannot be reclassified as PPPoE until it is
   down to one. There is still no plain "remove a router" action — only replace.
+- **A new install can be dispatched with no premises; nothing else can.**
+  `work_orders.customer_premises_id` is nullable (017), guarded by
+  `job_premises_required_unless_new_install`: with no premises the job must be a
+  `new_install`, have a site, and have non-empty notes — the notes are the rough
+  location, the only thing that says where it is. `POST /api/work-orders` enforces
+  the same with sentences a person can act on. The premises is attached later by
+  `PATCH /api/work-orders/:id` with `customer_premises_id` (or a `premises` object,
+  captured on the spot and filed under the job's site), or automatically when a
+  router is installed against the job (`resolveJob` in `installations.js`); both go
+  through `lib/jobPremises.js`, which refuses a job that already has one, a premises
+  at another site, and a former client. Field techs may attach (it is what they do
+  on arrival). A premises-less job still carries a `premises` object on the wire,
+  with nothing in it and `label: 'Location to be confirmed'`, so a client reading
+  `premises.village` does not crash — `customer_premises_id === null` is how to
+  tell. A job can be completed before it has a premises; it is not blocked on one.
 - **A premises that stops being a client is marked, not deleted — unless it never
   had any history.** `DELETE /api/premises/:id` is admin-only and refuses (409) a
   premises with a job or an installation, because those rows carry the cost and

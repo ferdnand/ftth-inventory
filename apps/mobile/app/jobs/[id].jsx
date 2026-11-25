@@ -145,6 +145,21 @@ export default function JobScreen() {
 
       {/* --- The place ---------------------------------------------------- */}
       <SectionLabel>The premises</SectionLabel>
+      {!data.customer_premises_id ? (
+        // A new install dispatched before anyone knew where it was. The notes are
+        // the only thing saying where, so they are shown; the premises is set once
+        // the tech has found the place, or when the router goes in.
+        <Card>
+          <Text style={styles.itemName}>Location to be confirmed</Text>
+          {data.site_name ? <Text style={styles.itemMeta}>{data.site_name}</Text> : null}
+          {data.notes ? (
+            <Text style={[styles.serialStatus, { marginTop: 4 }]}>{data.notes}</Text>
+          ) : null}
+          <PrimaryButton onPress={() => router.push(`/jobs/${jobId}/premises`)}>
+            Set the premises
+          </PrimaryButton>
+        </Card>
+      ) : (
       <Card>
         <Text style={styles.itemName}>{premises.customer_name ?? 'No name recorded'}</Text>
         <Text style={styles.itemMeta}>
@@ -181,6 +196,7 @@ export default function JobScreen() {
           </Pressable>
         )}
       </Card>
+      )}
 
       {/* --- What was fitted ---------------------------------------------- */}
       <SectionLabel>Router</SectionLabel>
@@ -198,10 +214,19 @@ export default function JobScreen() {
       ) : (
         <Row
           title="No router fitted"
-          meta="A repair may not need one — leave it if nothing was installed"
+          meta={
+            data.customer_premises_id
+              ? 'A repair may not need one — leave it if nothing was installed'
+              : 'Set the premises first'
+          }
           done={false}
           onPress={() =>
-            router.push(`/premises/${premises.id}/install?job=${jobId}`)
+            // No premises yet means no place to fit it at, so set that first.
+            router.push(
+              data.customer_premises_id
+                ? `/premises/${premises.id}/install?job=${jobId}`
+                : `/jobs/${jobId}/premises`
+            )
           }
         />
       )}

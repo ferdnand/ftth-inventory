@@ -367,7 +367,6 @@ router.get(
                     WHERE inst.work_order_id = wo.id AND i.unit_cost IS NULL)
                   AS unpriced_lines
            FROM work_orders wo
-           JOIN customer_premises cp ON cp.id = wo.customer_premises_id
           WHERE wo.status <> 'cancelled'
             AND ($1::date IS NULL OR ${JOB_WORK_DAY} >= $1::date)
             AND ($2::date IS NULL OR ${JOB_WORK_DAY} <= $2::date)

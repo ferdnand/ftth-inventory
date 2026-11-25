@@ -28,7 +28,7 @@ import { WORK_ORDER_STATUSES, WORK_ORDER_TYPES, label } from '../lib/constants';
 // Premises combobox, scoped to the site the job is at. Before anything is typed
 // it lists that site's premises, because most compounds out here have no
 // address anybody would think to search for; typing narrows within the site.
-function PremisesPicker({ siteId, value, onChange, error }) {
+function PremisesPicker({ siteId, value, onChange, error, optional = false }) {
   const [term, setTerm] = useState('');
   const debounced = useDebounced(term, 300);
   const searching = debounced.trim().length >= 2;
@@ -66,7 +66,9 @@ function PremisesPicker({ siteId, value, onChange, error }) {
 
   return (
     <div className="field">
-      <label htmlFor="premises-search">Premises at this site</label>
+      <label htmlFor="premises-search">
+        Premises at this site{optional ? ' (optional)' : ''}
+      </label>
       <input
         id="premises-search"
         value={term}
@@ -112,6 +114,7 @@ function WorkOrderFormDialog({ onClose }) {
   const [scheduled, setScheduled] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState(null);
+  const premisesOptional = type === 'new_install';
 
   async function onSubmit(event) {
     event.preventDefault();
@@ -119,14 +122,20 @@ function WorkOrderFormDialog({ onClose }) {
       setError('Choose a site');
       return;
     }
-    if (!premises) {
-      setError('Choose a premises');
+    // Only a new install can be dispatched before anyone knows where it is. The
+    // others are work at a place that already exists, so they need it.
+    if (!premises && !premisesOptional) {
+      setError(`A ${label(type).toLowerCase()} job needs a premises`);
+      return;
+    }
+    if (!premises && !notes.trim()) {
+      setError('No premises yet — say roughly where this is in the notes');
       return;
     }
     try {
       const { work_order: created } = await create.mutateAsync({
         site_id: Number(siteId),
-        customer_premises_id: premises.id,
+        customer_premises_id: premises?.id,
         type,
         assigned_tech_id: techId ? Number(techId) : undefined,
         scheduled_date: scheduled || undefined,
@@ -169,19 +178,33 @@ function WorkOrderFormDialog({ onClose }) {
           placeholder="Choose a site"
           options={(sites.data ?? []).map((s) => ({ value: String(s.id), label: s.name }))}
         />
+        {/* Type comes straight after the site because it decides whether the
+          * premises is needed at all: a new install can be dispatched before
+          * anyone has found the compound. */}
+        <Select
+          id="wo-type"
+          label="Type"
+          value={type}
+          onChange={(v) => {
+            setType(v);
+            setError(null);
+          }}
+          options={WORK_ORDER_TYPES.map((t) => ({ value: t, label: label(t) }))}
+        />
         <PremisesPicker
           siteId={siteId ? Number(siteId) : null}
           value={premises}
           onChange={setPremises}
           error={error}
+          optional={premisesOptional}
         />
-        <Select
-          id="wo-type"
-          label="Type"
-          value={type}
-          onChange={setType}
-          options={WORK_ORDER_TYPES.map((t) => ({ value: t, label: label(t) }))}
-        />
+        {premisesOptional && !premises ? (
+          <div className="hint">
+            No premises yet? That is fine for a new install — put a rough idea of where it is in
+            the notes below, and attach the premises once the tech has found it or fitted the
+            router.
+          </div>
+        ) : null}
         <div className="field-row">
           <Select
             id="wo-tech"
@@ -195,7 +218,7 @@ function WorkOrderFormDialog({ onClose }) {
         </div>
         <TextArea
           id="wo-notes"
-          label="Notes"
+          label={!premises && premisesOptional ? 'Rough location (required)' : 'Notes'}
           value={notes}
           onChange={setNotes}
           style={{ minHeight: 80 }}
@@ -347,7 +370,9 @@ export function WorkOrdersPage() {
       render: (row) => (
         <>
           <div className="item-name">{row.label}</div>
-          <div className="item-meta">{formatPremisesCode(row.customer_premises_id)}</div>
+          <div className="item-meta">
+            {row.customer_premises_id ? formatPremisesCode(row.customer_premises_id) : 'No premises yet'}
+          </div>
         </>
       ),
     },

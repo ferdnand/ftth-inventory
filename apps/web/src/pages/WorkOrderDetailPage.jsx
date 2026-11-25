@@ -5,6 +5,8 @@ import { useTransactions, useUpdateWorkOrder, useUsers, useWorkOrder } from '../
 import { DataTable } from '../components/DataTable';
 import { Badge } from '../components/Badge';
 import { DateInput, Select } from '../components/fields';
+import { Modal } from '../components/Modal';
+import { PremisesPicker } from './WorkOrdersPage';
 import { EmptyState, ErrorState, LoadingRows } from '../components/states';
 import { PageHeader } from '../components/PageHeader';
 import { useToast } from '../components/Toast';
@@ -27,6 +29,57 @@ const NEXT_STATUSES = {
   cancelled: [],
 };
 
+// A new install dispatched before anyone knew where it was has no premises. This
+// attaches the one the tech found, from the job's own site — the API refuses one
+// at another site, and a job that already has one.
+function AttachPremisesDialog({ job, onClose }) {
+  const update = useUpdateWorkOrder();
+  const { notify, notifyError } = useToast();
+  const [premises, setPremises] = useState(null);
+
+  async function onSubmit(event) {
+    event.preventDefault();
+    if (!premises) return;
+    try {
+      await update.mutateAsync({ id: job.id, customer_premises_id: premises.id });
+      notify(`${premises.label} attached to job #${job.id}`);
+      onClose();
+    } catch (err) {
+      notifyError(err);
+    }
+  }
+
+  return (
+    <Modal
+      title={`Attach a premises to job #${job.id}`}
+      onClose={onClose}
+      footer={
+        <>
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="submit"
+            form="attach-premises-form"
+            className="btn-primary"
+            disabled={!premises || update.isPending}
+          >
+            {update.isPending ? 'Attaching…' : 'Attach premises'}
+          </button>
+        </>
+      }
+    >
+      <form id="attach-premises-form" onSubmit={onSubmit}>
+        <p className="hint">
+          Only premises at {job.site_name} are listed. Once attached, the premises cannot be
+          changed — a job's materials and costs belong to the place they were used.
+        </p>
+        <PremisesPicker siteId={job.site_id} value={premises} onChange={setPremises} />
+      </form>
+    </Modal>
+  );
+}
+
 // One job, and everything it produced: the unit fitted, the materials, the
 // labour, the money, and what it all came to.
 //
@@ -46,6 +99,8 @@ export function WorkOrderDetailPage() {
   const { notify, notifyError } = useToast();
 
   const [editing, setEditing] = useState(null);
+  const [attaching, setAttaching] = useState(false);
+  const canAttach = hasRole('warehouse_staff', 'pm');
 
   async function patch(body, message) {
     try {
@@ -108,7 +163,7 @@ export function WorkOrderDetailPage() {
         eyebrow={`Job #${wo.id} · ${label(wo.type)}`}
         title={wo.label}
         sub={[
-          formatPremisesCode(wo.customer_premises_id),
+          wo.customer_premises_id ? formatPremisesCode(wo.customer_premises_id) : 'No premises yet',
           wo.site_name,
           premises.customer_name,
           premises.customer_phone,
@@ -116,9 +171,11 @@ export function WorkOrderDetailPage() {
           .filter(Boolean)
           .join(' · ')}
         actions={
-          <Link className="btn-secondary" to={`/premises/${wo.customer_premises_id}`}>
-            Site history
-          </Link>
+          wo.customer_premises_id ? (
+            <Link className="btn-secondary" to={`/premises/${wo.customer_premises_id}`}>
+              Site history
+            </Link>
+          ) : null
         }
       />
 
@@ -153,6 +210,27 @@ export function WorkOrderDetailPage() {
 
       {/* --- Where ------------------------------------------------------- */}
       <div className="section-label">The premises</div>
+      {!wo.customer_premises_id ? (
+        <div className="card">
+          <div className="item-name">Location to be confirmed</div>
+          <div className="item-meta">{wo.site_name}</div>
+          {/* With no premises, the notes are the only thing saying where this is. */}
+          {wo.notes ? (
+            <div className="item-meta" style={{ whiteSpace: 'pre-wrap' }}>
+              {wo.notes}
+            </div>
+          ) : null}
+          <div className="item-meta">
+            Nobody has recorded the premises yet. Attach it once the tech has found it — or it is
+            attached automatically when the router is installed against this job.
+          </div>
+          {canAttach ? (
+            <button type="button" className="btn-secondary" onClick={() => setAttaching(true)}>
+              Attach a premises
+            </button>
+          ) : null}
+        </div>
+      ) : (
       <div className="card">
         <div className="item-name">{premises.label ?? wo.label}</div>
         <div className="item-meta">
@@ -168,6 +246,9 @@ export function WorkOrderDetailPage() {
               (premises.gps_accuracy_m ? ` (±${premises.gps_accuracy_m} m)` : '')}
         </div>
       </div>
+      )}
+
+      {attaching ? <AttachPremisesDialog job={wo} onClose={() => setAttaching(false)} /> : null}
 
       {/* --- Progress ---------------------------------------------------- */}
       <div className="section-label">Progress</div>

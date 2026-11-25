@@ -19,6 +19,7 @@ const {
   serviceLinesByInstallation,
 } = require('../lib/jobLines');
 const { isFieldTech, requireRole } = require('../middleware/auth');
+const { attachPremisesToJob } = require('../lib/jobPremises');
 
 // Every installation belongs to a job (012_jobs.sql). A caller may name one —
 // the manager dispatched it, or the tech opened it on arrival — and if nobody
@@ -31,12 +32,25 @@ const { isFieldTech, requireRole } = require('../middleware/auth');
 async function resolveJob(client, { premisesId, requestedJobId, user, type }) {
   if (requestedJobId) {
     const found = await client.query(
-      `SELECT id, customer_premises_id, assigned_tech_id, status
-       FROM work_orders WHERE id = $1`,
+      `SELECT id, customer_premises_id, site_id, assigned_tech_id, status
+       FROM work_orders WHERE id = $1 FOR UPDATE`,
       [requestedJobId]
     );
     if (found.rows.length === 0) throw notFound('work_order not found');
     const job = found.rows[0];
+
+    // A new install dispatched before anyone knew where it was has no premises
+    // yet. Installing the router is the moment it gets one.
+    if (!job.customer_premises_id) {
+      if (isFieldTech(user) && Number(job.assigned_tech_id) !== user.id) {
+        throw forbidden('That job is not assigned to you');
+      }
+      if (job.status === 'cancelled') {
+        throw conflict(`Job ${job.id} was cancelled — open a new one for this visit`);
+      }
+      await attachPremisesToJob(client, job, premisesId);
+      return job.id;
+    }
 
     // 012 enforces this with a trigger as well. Catching it here says which
     // premises the job is actually at.

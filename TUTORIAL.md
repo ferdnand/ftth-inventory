@@ -101,7 +101,8 @@ Applying 013_job_costing.sql ... ok
 Applying 014_location_active.sql ... ok
 Applying 015_job_site.sql ... ok
 Applying 016_hotspots_and_former_clients.sql ... ok
-Applied 16 migration(s).
+Applying 017_job_premises_optional.sql ... ok
+Applied 17 migration(s).
 ```
 
 This works the same in PowerShell, cmd.exe and bash. Run it again and it says
@@ -771,6 +772,39 @@ The first call returns `201`. The second returns `200` with
 `"replayed": true` and the *same* installation — not a second swap. Without this,
 a flaky connection could double-install a router, and `transactions` is
 append-only by design, so there would be no cleanup path.
+
+---
+
+## Part 7a — A new install before you know where it is
+
+On the dashboard, **Jobs → Dispatch a job** asks for the **site** first, then the
+**type**, then the premises. For a **new install** the premises is optional: the
+request often arrives before anybody has found the compound. Leave it empty and put
+a rough idea of the location in the notes — the field is relabelled *Rough location
+(required)* and the form will not submit without it.
+
+```bash
+curl -s localhost:4000/api/work-orders \
+  -H "Authorization: Bearer $STAFF" -H 'Content-Type: application/json' \
+  -d '{"type": "new_install", "site_id": 1,
+       "notes": "Past Nasianda market, ask for Mama Pima"}'
+```
+
+The job shows as **Location to be confirmed**, with those notes. A **repair,
+upgrade or removal** always needs a premises — it is work at a place that already
+exists — and asking for one without gets a 400.
+
+The premises is filled in later, three ways:
+
+- the dashboard job page → **Attach a premises** (lists only the job's site);
+- the field app job screen → **Set the premises** — pick one, search, or capture a
+  new one on the spot;
+- installing the router against the job, which attaches the premises you installed
+  it at.
+
+It can be set **once**: a job's materials and costs belong to the place they were
+used, so it cannot be moved from one house to another afterwards. A premises at a
+different site, or a former client, is refused.
 
 ---
 

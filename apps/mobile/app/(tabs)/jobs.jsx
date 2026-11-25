@@ -91,7 +91,7 @@ export default function JobsScreen() {
             </WorkOrderChip>
             <Text style={styles.resultAddr}>{job.label}</Text>
             <Text style={styles.resultId}>
-              {formatPremisesCode(job.customer_premises_id)}
+              {job.customer_premises_id ? formatPremisesCode(job.customer_premises_id) : 'No premises yet'}
               {job.site_name ? ` · ${job.site_name}` : ''}
               {job.scheduled_date ? ` · due ${formatDate(job.scheduled_date)}` : ''}
             </Text>

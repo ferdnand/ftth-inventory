@@ -27,6 +27,8 @@ function asyncHandler(fn) {
 // the friendly text in one place whether the app-level check caught it first or
 // the database did.
 const CONSTRAINT_MESSAGES = {
+  job_premises_required_unless_new_install:
+    'A job with no premises has to be a new install with a site and notes saying roughly where it is',
   uq_active_installation_per_premises:
     'An active router already exists at this premises. Use /replace instead.',
   uq_users_email_lower: 'A user with that email already exists',

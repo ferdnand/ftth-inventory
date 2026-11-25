@@ -30,7 +30,11 @@ const {
   optionalDate,
 } = require('../lib/validate');
 const { WORK_ORDER_TYPES, WORK_ORDER_STATUSES } = require('../lib/constants');
+
+// 'new_install' -> 'new install', for a sentence.
+const label = (value) => value.replace(/_/g, ' ');
 const { insertPremises, shapePremises, assertIsSite } = require('../lib/premises');
+const { attachPremisesToJob } = require('../lib/jobPremises');
 const {
   parseServiceLines,
   writeServiceLines,
@@ -57,7 +61,7 @@ const JOB_SELECT = `
          tech.name AS assigned_tech_name,
          opener.name AS created_by_name
   FROM work_orders wo
-  JOIN customer_premises cp ON cp.id = wo.customer_premises_id
+  LEFT JOIN customer_premises cp ON cp.id = wo.customer_premises_id
   LEFT JOIN locations site ON site.id = wo.site_id
   LEFT JOIN users tech ON tech.id = wo.assigned_tech_id
   LEFT JOIN users opener ON opener.id = wo.created_by
@@ -85,6 +89,12 @@ function shapeJob(row) {
     site_id: row.site_id,
     site_name: row.site_name,
   });
+
+  // A new install can be dispatched before anyone knows where it is. It still
+  // gets a premises-shaped object — with nothing in it — so a client reading
+  // `premises.village` does not have to guard every access, and a label that says
+  // so. `customer_premises_id` being null is how a client tells.
+  if (row.customer_premises_id === null) premises.label = 'Location to be confirmed';
 
   // `premises_notes` is an alias that only exists to stop cp.notes colliding
   // with work_orders.notes in the flattened row. It has served its purpose by
@@ -308,10 +318,26 @@ router.post(
           'new one — not both'
       );
     }
-    if (!hasPremisesId && !hasNewPremises) {
-      throw badRequest(
-        'customer_premises_id is required, or send a premises object to capture a new one'
-      );
+    // Only a new install may be opened without a premises: it can be dispatched
+    // before anyone knows where it is, and the premises is attached afterwards.
+    // The rough location goes in the notes, because nothing else says where it is.
+    const noPremises = !hasPremisesId && !hasNewPremises;
+    if (noPremises) {
+      if (type !== 'new_install') {
+        throw badRequest(
+          `A ${label(type).toLowerCase()} job needs a premises — send customer_premises_id, ` +
+            'or a premises object to capture a new one'
+        );
+      }
+      if (!notes) {
+        throw badRequest(
+          'With no premises yet, say roughly where this is in the notes ' +
+            '(village, landmark, who to ask for)'
+        );
+      }
+      if (!requestedSiteId) {
+        throw badRequest('site_id is required — say which site this job is at');
+      }
     }
 
     // A tech-opened job is in progress by the time it exists — they are
@@ -330,9 +356,12 @@ router.post(
     try {
       await client.query('BEGIN');
 
-      let premisesId;
+      let premisesId = null;
       let siteId;
-      if (hasNewPremises) {
+      if (noPremises) {
+        siteId = requestedSiteId;
+        await assertIsSite(client, siteId);
+      } else if (hasNewPremises) {
         const draft = req.body.premises;
         if (typeof draft !== 'object' || Array.isArray(draft)) {
           throw badRequest('premises must be an object');
@@ -442,14 +471,20 @@ const STATUS_TRANSITIONS = {
 };
 
 // PATCH /api/work-orders/:id
-// body: { status?, assigned_tech_id?, scheduled_date?, performed_on?, notes? }
+// body: { status?, assigned_tech_id?, scheduled_date?, performed_on?, notes?,
+//         customer_premises_id | premises }
+//
+// `customer_premises_id` or `premises` (captured on the spot) attach a premises to
+// a job that was dispatched without one. They are refused once it has one — moving
+// a job from one house to another would rewrite where its materials went.
 router.patch(
   '/:id',
   asyncHandler(async (req, res) => {
     const id = intId(req.params.id, 'id');
 
     const existing = await db.query(
-      'SELECT id, status, assigned_tech_id, performed_on FROM work_orders WHERE id = $1',
+      `SELECT id, status, assigned_tech_id, performed_on, site_id, customer_premises_id
+       FROM work_orders WHERE id = $1`,
       [id]
     );
     if (existing.rows.length === 0) throw notFound('Job not found');
@@ -461,7 +496,9 @@ router.patch(
     // day the phone had signal are routinely not the same. Reassigning and
     // rescheduling stay with whoever plans the work.
     if (isFieldTech(req.user)) {
-      const techEditable = ['status', 'notes', 'performed_on'];
+      // Attaching the premises they have just found to a job dispatched without
+      // one is exactly what a tech standing there needs to do.
+      const techEditable = ['status', 'notes', 'performed_on', 'customer_premises_id', 'premises'];
       const attempted = Object.keys(req.body).filter((k) => !techEditable.includes(k));
       if (attempted.length > 0) {
         throw forbidden(`Field techs may only change: ${techEditable.join(', ')}`);
@@ -511,13 +548,67 @@ router.patch(
       set('notes', optionalString(req.body.notes, 'notes', 1000));
     }
 
-    if (sets.length === 0) throw badRequest('No editable fields were provided');
+    const attachingId =
+      req.body.customer_premises_id === undefined || req.body.customer_premises_id === null
+        ? null
+        : intId(req.body.customer_premises_id, 'customer_premises_id');
+    const attachingNew = req.body.premises !== undefined && req.body.premises !== null;
+    if (attachingId && attachingNew) {
+      throw badRequest('Send customer_premises_id or premises to capture a new one — not both');
+    }
+    const attaching = Boolean(attachingId) || attachingNew;
+    if (attaching && current.customer_premises_id) {
+      throw conflict(`Job #${id} already has a premises`);
+    }
+    if (attachingNew && (typeof req.body.premises !== 'object' || Array.isArray(req.body.premises))) {
+      throw badRequest('premises must be an object');
+    }
 
-    params.push(id);
-    await db.query(
-      `UPDATE work_orders SET ${sets.join(', ')} WHERE id = $${params.length}`,
-      params
-    );
+    if (sets.length === 0 && !attaching) throw badRequest('No editable fields were provided');
+
+    if (!attaching) {
+      params.push(id);
+      await db.query(
+        `UPDATE work_orders SET ${sets.join(', ')} WHERE id = $${params.length}`,
+        params
+      );
+    } else {
+      const client = await db.pool.connect();
+      try {
+        await client.query('BEGIN');
+        const locked = await client.query(
+          'SELECT id, site_id, customer_premises_id FROM work_orders WHERE id = $1 FOR UPDATE',
+          [id]
+        );
+        if (locked.rows[0].customer_premises_id) throw conflict(`Job #${id} already has a premises`);
+
+        let premisesId = attachingId;
+        if (attachingNew) {
+          // Captured on the spot, at the job's site.
+          const created = await insertPremises(
+            client,
+            { ...req.body.premises, site_id: locked.rows[0].site_id },
+            req.user.id
+          );
+          premisesId = created.id;
+        }
+        await attachPremisesToJob(client, locked.rows[0], premisesId);
+
+        if (sets.length > 0) {
+          params.push(id);
+          await client.query(
+            `UPDATE work_orders SET ${sets.join(', ')} WHERE id = $${params.length}`,
+            params
+          );
+        }
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
 
     const full = await db.query(`${JOB_SELECT} WHERE wo.id = $1`, [id]);
     res.json({ work_order: shapeJob(full.rows[0]) });

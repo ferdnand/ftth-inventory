@@ -139,10 +139,10 @@ test('a job cannot name both an existing premises and a new one', async () => {
   assert.match(res.body.error, /not both/);
 });
 
-test('a job with no premises at all is rejected', async () => {
+test('a repair with no premises at all is rejected', async () => {
   const res = await openJob({ type: 'repair' });
   assert.equal(res.status, 400);
-  assert.match(res.body.error, /customer_premises_id is required/);
+  assert.match(res.body.error, /needs a premises/);
 });
 
 // If the premises is unusable the job must not exist either: both writes share
@@ -747,4 +747,177 @@ test('a tech can read the stock at a site, but not at another tech’s van', asy
 
   const van = await h.api.get(`/api/stock?location_id=${otherVan.id}`, { as: world.tech });
   assert.equal(van.status, 403);
+});
+
+// --- A new install can be dispatched before the premises is known ---------
+
+test('a new install can be dispatched with a site and a rough location, but no premises', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const res = await openJob(
+    {
+      type: 'new_install',
+      site_id: bungoma,
+      notes: 'Somewhere past Nasianda market, ask for Mama Pima',
+    },
+    world.staff
+  );
+
+  assert.equal(res.status, 201);
+  const job = res.body.work_order;
+  assert.equal(job.customer_premises_id, null);
+  assert.equal(job.site_name, 'Bungoma');
+  assert.equal(job.label, 'Location to be confirmed');
+  assert.equal(job.notes, 'Somewhere past Nasianda market, ask for Mama Pima');
+
+  // It still lists and opens like any other job.
+  const list = await h.api.get('/api/work-orders', { as: world.staff });
+  assert.equal(list.body.work_orders.length, 1);
+  const detail = await getJob(job.id, world.staff);
+  assert.equal(detail.status, 200);
+});
+
+test('with no premises, the notes have to say roughly where it is', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const res = await openJob({ type: 'new_install', site_id: bungoma }, world.staff);
+
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /roughly where/);
+});
+
+test('with no premises, the site is still required', async () => {
+  const res = await openJob({ type: 'new_install', notes: 'Near the market' }, world.staff);
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /site_id is required/);
+});
+
+test('a repair, upgrade or removal needs a premises', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  for (const type of ['repair', 'upgrade', 'removal']) {
+    const res = await openJob({ type, site_id: bungoma, notes: 'Near the market' }, world.staff);
+    assert.equal(res.status, 400, type);
+    assert.match(res.body.error, /needs a premises/);
+  }
+});
+
+test('the database refuses a premises-less job that is not a new install', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  await assert.rejects(
+    () =>
+      h.db.query(
+        `INSERT INTO work_orders (site_id, type, status, notes)
+         VALUES ($1, 'repair', 'open', 'Near the market')`,
+        [bungoma]
+      ),
+    (err) => err.constraint === 'job_premises_required_unless_new_install'
+  );
+});
+
+test('the premises can be attached afterwards, once, at the job’s site', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const job = (
+    await openJob(
+      { type: 'new_install', site_id: bungoma, notes: 'Past Nasianda market' },
+      world.staff
+    )
+  ).body.work_order;
+
+  const attached = await h.api.patch(`/api/work-orders/${job.id}`, {
+    as: world.staff,
+    body: { customer_premises_id: world.premises.id },
+  });
+  assert.equal(attached.status, 200);
+  assert.equal(attached.body.work_order.customer_premises_id, world.premises.id);
+  assert.equal(attached.body.work_order.site_id, bungoma);
+
+  const again = await h.api.patch(`/api/work-orders/${job.id}`, {
+    as: world.staff,
+    body: { customer_premises_id: world.premises.id },
+  });
+  assert.equal(again.status, 409);
+});
+
+test('a premises at another site cannot be attached', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const kisumuHouse = await h.createPremises({
+    landmark: 'By the lake',
+    site_id: await h.siteId('Kisumu'),
+  });
+  const job = (
+    await openJob({ type: 'new_install', site_id: bungoma, notes: 'Near the market' }, world.staff)
+  ).body.work_order;
+
+  const res = await h.api.patch(`/api/work-orders/${job.id}`, {
+    as: world.staff,
+    body: { customer_premises_id: kisumuHouse.id },
+  });
+  assert.equal(res.status, 400);
+  assert.match(res.body.error, /Kisumu/);
+});
+
+test('a tech can capture the premises on the spot and attach it to a dispatched job', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const job = (
+    await openJob(
+      {
+        type: 'new_install',
+        site_id: bungoma,
+        notes: 'Past Nasianda market',
+        assigned_tech_id: world.tech.id,
+      },
+      world.staff
+    )
+  ).body.work_order;
+
+  const res = await h.api.patch(`/api/work-orders/${job.id}`, {
+    as: world.tech,
+    body: { premises: { landmark: 'Third compound past the borehole', village: 'Nasianda' } },
+  });
+
+  assert.equal(res.status, 200);
+  const done = res.body.work_order;
+  assert.ok(done.customer_premises_id);
+  assert.equal(done.premises.village, 'Nasianda');
+  assert.equal(done.premises.site_id, bungoma);
+});
+
+test('installing a router against a premises-less job attaches the premises', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const job = (
+    await openJob(
+      {
+        type: 'new_install',
+        site_id: bungoma,
+        notes: 'Past Nasianda market',
+        assigned_tech_id: world.tech.id,
+      },
+      world.staff
+    )
+  ).body.work_order;
+
+  const res = await h.api.post('/api/installations', {
+    as: world.tech,
+    body: {
+      customer_premises_id: world.premises.id,
+      item_instance_id: unit.id,
+      work_order_id: job.id,
+    },
+  });
+  assert.equal(res.status, 201);
+
+  const after = await getJob(job.id, world.staff);
+  assert.equal(after.body.work_order.customer_premises_id, world.premises.id);
+  assert.equal(after.body.work_order.installations.length, 1);
+});
+
+test('premises-less jobs still count in the job-cost report', async () => {
+  const bungoma = await h.siteId('Bungoma');
+  const job = (
+    await openJob({ type: 'new_install', site_id: bungoma, notes: 'Near the market' }, world.staff)
+  ).body.work_order;
+  await putExpenses(job.id, [{ category: 'transport', amount: 300 }], world.staff);
+
+  const res = await h.api.get('/api/reports/job-costs?group_by=site', { as: world.staff });
+  assert.equal(res.status, 200);
+  const row = res.body.job_costs.find((r) => r.label === 'Bungoma');
+  assert.equal(row.expenses_total, 300);
 });

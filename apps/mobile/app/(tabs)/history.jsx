@@ -104,11 +104,14 @@ export default function HistoryScreen() {
               </View>
               <Badge value={job.status} />
             </View>
-            <View style={{ marginTop: 10 }}>
-              <Pill onPress={() => router.push(`/premises/${job.customer_premises_id}`)}>
-                Open site history
-              </Pill>
-            </View>
+            {/* A job with no premises yet has no site history to open. */}
+            {job.customer_premises_id ? (
+              <View style={{ marginTop: 10 }}>
+                <Pill onPress={() => router.push(`/premises/${job.customer_premises_id}`)}>
+                  Open site history
+                </Pill>
+              </View>
+            ) : null}
           </Card>
         ))
       )}
